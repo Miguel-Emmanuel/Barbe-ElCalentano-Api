@@ -1,0 +1,309 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+enum AppointmentStatus {
+  SCHEDULED
+  CONFIRMED
+  CHECKED_IN
+  COMPLETED
+  CANCELLED
+  NO_SHOW
+}
+
+enum PaymentStatus {
+  PENDING
+  PAID
+  REFUNDED
+}
+
+enum PaymentMethod {
+  CASH
+  CARD
+  TRANSFER
+  OTHER
+}
+
+enum UserRole {
+  ADMIN
+  MANAGER
+  BARBER
+  RECEPTIONIST
+}
+
+enum WaitlistStatus {
+  WAITING
+  NOTIFIED
+  BOOKED
+  CANCELLED
+}
+
+model Branch {
+  id                     String   @id @default(cuid())
+  name                   String
+  address                String
+  city                   String
+  state                  String
+  zip                    String
+  country                String   @default("MX")
+  phone                  String?
+  instagram              String?
+  timezone               String   @default("America/Mexico_City")
+  cancelNoticeHours      Int      @default(24)
+  lateCancelFeePercent   Float    @default(50)
+  graceMinutes           Int      @default(15)
+  depositRequired        Boolean  @default(false)
+  depositPercent         Float    @default(0)
+  loyaltyPointsPer100Mxn Int      @default(1)
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+
+  barbers       Barber[]
+  services      Service[]
+  appointments  Appointment[]
+  businessHours BusinessHour[]
+  waitlist      WaitlistEntry[]
+  products      Product[]
+  sales         Sale[]
+}
+
+model Barber {
+  id                String   @id @default(cuid())
+  name              String
+  slug              String   @unique
+  nickname          String?
+  specialties       String?
+  commissionPercent Float    @default(50)
+  active            Boolean  @default(true)
+  branchId          String
+  branch            Branch   @relation(fields: [branchId], references: [id])
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  appointments Appointment[]
+  waitlist     WaitlistEntry[]
+}
+
+model Service {
+  id             String   @id @default(cuid())
+  code           String   @unique
+  name           String
+  description    String?
+  durationMin    Int
+  priceCents     Int
+  category       String
+  active         Boolean  @default(true)
+  sortOrder      Int      @default(0)
+  allowsQuantity Boolean  @default(false)
+  branchId       String
+  branch         Branch   @relation(fields: [branchId], references: [id])
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  appointments Appointment[]
+  waitlist     WaitlistEntry[]
+}
+
+model Client {
+  id            String   @id @default(cuid())
+  name          String
+  phone         String
+  email         String?
+  notes         String?
+  blocked       Boolean  @default(false)
+  loyaltyPoints Int      @default(0)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  appointments Appointment[]
+  waitlist     WaitlistEntry[]
+  sales        Sale[]
+
+  @@unique([phone])
+}
+
+model WaitlistEntry {
+  id            String         @id @default(cuid())
+  date          String
+  preferredTime String?
+  status        WaitlistStatus @default(WAITING)
+  notes         String?
+  clientId      String
+  barberId      String?
+  serviceId     String
+  branchId      String
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+
+  client  Client  @relation(fields: [clientId], references: [id])
+  barber  Barber? @relation(fields: [barberId], references: [id])
+  service Service @relation(fields: [serviceId], references: [id])
+  branch  Branch  @relation(fields: [branchId], references: [id])
+
+  @@index([date, status])
+}
+
+model Appointment {
+  id                   String            @id @default(cuid())
+  startAt              DateTime
+  endAt                DateTime
+  status               AppointmentStatus @default(SCHEDULED)
+  quantity             Int               @default(1)
+  priceCents           Int
+  notes                String?
+  depositCents         Int               @default(0)
+  cancellationFeeCents Int               @default(0)
+  cancelledAt          DateTime?
+  clientId             String
+  barberId             String
+  serviceId            String
+  branchId             String
+  createdAt            DateTime          @default(now())
+  updatedAt            DateTime          @updatedAt
+
+  client     Client      @relation(fields: [clientId], references: [id])
+  barber     Barber      @relation(fields: [barberId], references: [id])
+  service    Service     @relation(fields: [serviceId], references: [id])
+  branch     Branch      @relation(fields: [branchId], references: [id])
+  payment    Payment?
+  tip        Tip?
+  commission Commission?
+
+  @@index([barberId, startAt, endAt])
+  @@index([branchId, startAt])
+  @@index([status])
+}
+
+model Payment {
+  id            String        @id @default(cuid())
+  appointmentId String        @unique
+  amountCents   Int
+  tipCents      Int           @default(0)
+  method        PaymentMethod @default(CASH)
+  status        PaymentStatus @default(PENDING)
+  paidAt        DateTime?
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  appointment Appointment @relation(fields: [appointmentId], references: [id])
+}
+
+model Tip {
+  id            String   @id @default(cuid())
+  appointmentId String   @unique
+  barberId      String
+  amountCents   Int
+  createdAt     DateTime @default(now())
+
+  appointment Appointment @relation(fields: [appointmentId], references: [id])
+}
+
+model Commission {
+  id                String   @id @default(cuid())
+  appointmentId     String   @unique
+  barberId          String
+  serviceCents      Int
+  tipCents          Int      @default(0)
+  barberEarnCents   Int
+  shopEarnCents     Int
+  commissionPercent Float
+  createdAt         DateTime @default(now())
+
+  appointment Appointment @relation(fields: [appointmentId], references: [id])
+}
+
+model Product {
+  id          String   @id @default(cuid())
+  sku         String   @unique
+  name        String
+  description String?
+  priceCents  Int
+  stock       Int      @default(0)
+  active      Boolean  @default(true)
+  branchId    String
+  branch      Branch   @relation(fields: [branchId], references: [id])
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  lines SaleLine[]
+}
+
+model Sale {
+  id         String        @id @default(cuid())
+  totalCents Int
+  method     PaymentMethod @default(CASH)
+  clientId   String?
+  branchId   String
+  notes      String?
+  createdAt  DateTime      @default(now())
+
+  client Client?    @relation(fields: [clientId], references: [id])
+  branch Branch     @relation(fields: [branchId], references: [id])
+  lines  SaleLine[]
+}
+
+model SaleLine {
+  id        String @id @default(cuid())
+  saleId    String
+  productId String
+  quantity  Int
+  unitCents Int
+  lineCents Int
+
+  sale    Sale    @relation(fields: [saleId], references: [id])
+  product Product @relation(fields: [productId], references: [id])
+}
+
+model BusinessHour {
+  id                String  @id @default(cuid())
+  branchId          String
+  dayOfWeek         Int
+  openMin           Int
+  closeMin          Int
+  byAppointmentOnly Boolean @default(false)
+  closed            Boolean @default(false)
+  branch            Branch  @relation(fields: [branchId], references: [id])
+
+  @@unique([branchId, dayOfWeek])
+}
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  name         String
+  role         UserRole @default(RECEPTIONIST)
+  passwordHash String
+  active       Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+model NotificationLog {
+  id        String   @id @default(cuid())
+  channel   String
+  to        String
+  subject   String?
+  body      String
+  status    String
+  meta      String?
+  createdAt DateTime @default(now())
+}
+
+model ReminderJob {
+  id            String   @id @default(cuid())
+  appointmentId String
+  runAt         DateTime
+  channel       String   @default("SMS")
+  status        String   @default("PENDING")
+  attempts      Int      @default(0)
+  lastError     String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([status, runAt])
+}
