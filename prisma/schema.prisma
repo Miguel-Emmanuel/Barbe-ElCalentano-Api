@@ -16,6 +16,11 @@ enum AppointmentStatus {
   NO_SHOW
 }
 
+enum AppointmentSource {
+  BOOKED
+  WALK_IN
+}
+
 enum PaymentStatus {
   PENDING
   PAID
@@ -87,6 +92,7 @@ model Barber {
 
   appointments Appointment[]
   waitlist     WaitlistEntry[]
+  user         User?
 }
 
 model Service {
@@ -153,6 +159,7 @@ model Appointment {
   startAt              DateTime
   endAt                DateTime
   status               AppointmentStatus @default(SCHEDULED)
+  source               AppointmentSource @default(BOOKED)
   quantity             Int               @default(1)
   priceCents           Int
   notes                String?
@@ -277,8 +284,11 @@ model User {
   email        String   @unique
   name         String
   role         UserRole @default(RECEPTIONIST)
+  isSuperAdmin Boolean  @default(false)
   passwordHash String
   active       Boolean  @default(true)
+  barberId     String?  @unique
+  barber       Barber?  @relation(fields: [barberId], references: [id])
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 }

@@ -16,7 +16,7 @@ function safeEqual(a: string, b: string): boolean {
 }
 
 export async function login(email: string, password: string) {
-  const user = await prisma.user.findUnique({ where: { email: email.toLowerCase().trim() } });
+  const user = await prisma.user.findUnique({ where: { email: email.toLowerCase().trim() }, include: { barber: true } });
   if (!user || !user.active) {
     throw new AppError("VALIDATION_ERROR", "Correo o contraseña incorrectos.", 401);
   }
@@ -34,6 +34,9 @@ export async function login(email: string, password: string) {
       email: user.email,
       name: user.name,
       role: user.role,
+      isSuperAdmin: user.isSuperAdmin,
+      barberId: user.barberId,
+      barberName: user.barber?.name ?? null,
     },
   };
 }
@@ -58,12 +61,29 @@ export async function getUserFromToken(token: string | undefined) {
   const userId = requireAuth(token);
   const user = await prisma.user.findUnique({
     where: { id: userId },
-    select: { id: true, email: true, name: true, role: true, active: true },
+    select: {
+      id: true,
+      email: true,
+      name: true,
+      role: true,
+      active: true,
+      isSuperAdmin: true,
+      barberId: true,
+      barber: { select: { name: true } },
+    },
   });
   if (!user || !user.active) {
     throw new AppError("VALIDATION_ERROR", "Usuario no válido.", 401);
   }
-  return user;
+  return {
+    id: user.id,
+    email: user.email,
+    name: user.name,
+    role: user.role,
+    isSuperAdmin: user.isSuperAdmin,
+    barberId: user.barberId,
+    barberName: user.barber?.name ?? null,
+  };
 }
 
 export function extractBearer(header: string | undefined): string | undefined {

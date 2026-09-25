@@ -44,16 +44,14 @@ async function main() {
     },
   });
 
-  // Mon-Sat 10:00-20:00 (default configurable), Sunday 11:00-16:00 by appointment only
-  const hours = [
-    { dayOfWeek: 0, openMin: 11 * 60, closeMin: 16 * 60, byAppointmentOnly: true, closed: false },
-    { dayOfWeek: 1, openMin: 10 * 60, closeMin: 20 * 60, byAppointmentOnly: false, closed: false },
-    { dayOfWeek: 2, openMin: 10 * 60, closeMin: 20 * 60, byAppointmentOnly: false, closed: false },
-    { dayOfWeek: 3, openMin: 10 * 60, closeMin: 20 * 60, byAppointmentOnly: false, closed: false },
-    { dayOfWeek: 4, openMin: 10 * 60, closeMin: 20 * 60, byAppointmentOnly: false, closed: false },
-    { dayOfWeek: 5, openMin: 10 * 60, closeMin: 20 * 60, byAppointmentOnly: false, closed: false },
-    { dayOfWeek: 6, openMin: 10 * 60, closeMin: 20 * 60, byAppointmentOnly: false, closed: false },
-  ];
+  // Every day 9:00–20:00
+  const hours = [0, 1, 2, 3, 4, 5, 6].map((dayOfWeek) => ({
+    dayOfWeek,
+    openMin: 9 * 60,
+    closeMin: 20 * 60,
+    byAppointmentOnly: false,
+    closed: false,
+  }));
 
   for (const h of hours) {
     await prisma.businessHour.create({
@@ -92,22 +90,12 @@ async function main() {
     data: [
       {
         code: "corte_adulto",
-        name: "Corte de cabello (adulto)",
-        description: "Corte clásico o moderno",
+        name: "Corte de cabello",
+        description: "Adulto y niño",
         durationMin: 40,
         priceCents: 12000,
         category: "corte",
         sortOrder: 1,
-        branchId: branch.id,
-      },
-      {
-        code: "corte_nino",
-        name: "Corte de cabello (niño)",
-        description: "Corte para niños",
-        durationMin: 40,
-        priceCents: 12000,
-        category: "corte",
-        sortOrder: 2,
         branchId: branch.id,
       },
       {
@@ -124,7 +112,7 @@ async function main() {
       {
         code: "combo_barba_corte",
         name: "Combo barba y corte",
-        description: "Corte + barba completo",
+        description: "Corte con barba",
         durationMin: 60,
         priceCents: 26000,
         category: "combo",
@@ -134,7 +122,7 @@ async function main() {
       {
         code: "solo_barba",
         name: "Solo barba",
-        description: "Perfilado y arreglo de barba",
+        description: "Servicio de barba",
         durationMin: 40,
         priceCents: 14500,
         category: "barba",
@@ -154,14 +142,45 @@ async function main() {
     ],
   });
 
+  const barbers = await prisma.barber.findMany();
+  const bySlug = Object.fromEntries(barbers.map((b) => [b.slug, b]));
+
   await prisma.user.create({
     data: {
       email: "admin@elcalentano.mx",
-      name: "Administrador",
+      name: "Ismael",
       role: UserRole.ADMIN,
+      isSuperAdmin: true,
       passwordHash: hashPassword("calentano123"),
+      barberId: bySlug["ismael-el-calentano"]?.id,
     },
   });
+
+  if (bySlug["alex-ibarra"]) {
+    await prisma.user.create({
+      data: {
+        email: "alex@elcalentano.mx",
+        name: "Alex Ibarra",
+        role: UserRole.BARBER,
+        isSuperAdmin: false,
+        passwordHash: hashPassword("calentano123"),
+        barberId: bySlug["alex-ibarra"].id,
+      },
+    });
+  }
+
+  if (bySlug["zaira-garduno"]) {
+    await prisma.user.create({
+      data: {
+        email: "zaira@elcalentano.mx",
+        name: "Zaira Garduño",
+        role: UserRole.BARBER,
+        isSuperAdmin: false,
+        passwordHash: hashPassword("calentano123"),
+        barberId: bySlug["zaira-garduno"].id,
+      },
+    });
+  }
 
   await prisma.product.createMany({
     data: [

@@ -332,24 +332,47 @@ export async function sellProducts(input: {
   };
 }
 
-export async function listCommissions(date?: string) {
+export async function listCommissions(opts?: {
+  date?: string;
+  dateFrom?: string;
+  dateTo?: string;
+  barberId?: string;
+}) {
+  const dateFrom = opts?.dateFrom ?? opts?.date;
+  const dateTo = opts?.dateTo ?? opts?.date;
+
   let rows;
-  if (!date) {
+  if (!dateFrom && !dateTo) {
     rows = await prisma.commission.findMany({
-      include: { appointment: { include: { barber: true, service: true, client: true } } },
+      where: opts?.barberId ? { barberId: opts.barberId } : undefined,
+      include: {
+        appointment: {
+          include: { barber: true, service: true, client: true, payment: true },
+        },
+      },
       orderBy: { createdAt: "desc" },
-      take: 100,
+      take: 200,
     });
   } else {
-    const { listAppointments } = await import("./bookingService.js");
-    const appts = await listAppointments(date);
+    const { searchAppointments } = await import("./bookingService.js");
+    const appts = await searchAppointments({ dateFrom, dateTo });
     const ids = appts.map((a) => a.id);
     rows = await prisma.commission.findMany({
-      where: { appointmentId: { in: ids } },
-      include: { appointment: { include: { barber: true, service: true, client: true } } },
+      where: {
+        appointmentId: { in: ids },
+        ...(opts?.barberId ? { barberId: opts.barberId } : {}),
+      },
+      include: {
+        appointment: {
+          include: { barber: true, service: true, client: true, payment: true },
+        },
+      },
       orderBy: { createdAt: "desc" },
     });
   }
+
+  const branch = await getBranch();
+  const timeZone = branch.timezone || "America/Mexico_City";
 
   const byBarberMap = new Map<
     string,
@@ -357,35 +380,159 @@ export async function listCommissions(date?: string) {
       barberId: string;
       barberName: string;
       count: number;
+      serviceCents: number;
+      commissionCents: number;
       barberEarnCents: number;
       shopEarnCents: number;
       tipCents: number;
     }
   >();
+  const byDayBarber = new Map<
+    string,
+    {
+      date: string;
+      barberId: string;
+      barberName: string;
+      count: number;
+      serviceCents: number;
+      commissionCents: number;
+      tipCents: number;
+      payCents: number;
+      shopCents: number;
+      percents: number[];
+    }
+  >();
+
+  const localDateKey = (value: Date) =>
+    new Intl.DateTimeFormat("en-CA", {
+      timeZone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(value);
 
   for (const row of rows) {
+    const commissionCents = row.barberEarnCents - row.tipCents;
     const key = row.barberId;
     const prev = byBarberMap.get(key) ?? {
       barberId: row.barberId,
       barberName: row.appointment.barber.name,
       count: 0,
+      serviceCents: 0,
+      commissionCents: 0,
       barberEarnCents: 0,
       shopEarnCents: 0,
       tipCents: 0,
     };
     prev.count += 1;
+    prev.serviceCents += row.serviceCents;
+    prev.commissionCents += commissionCents;
     prev.barberEarnCents += row.barberEarnCents;
     prev.shopEarnCents += row.shopEarnCents;
     prev.tipCents += row.tipCents;
     byBarberMap.set(key, prev);
+
+    const day = localDateKey(row.appointment.startAt);
+    const dayKey = `${day}|${row.barberId}`;
+    const nickname = row.appointment.barber.nickname;
+    const dayPrev = byDayBarber.get(dayKey) ?? {
+      date: day,
+      barberId: row.barberId,
+      barberName: nickname
+        ? `${row.appointment.barber.name} (${nickname})`
+        : row.appointment.barber.name,
+      count: 0,
+      serviceCents: 0,
+      commissionCents: 0,
+      tipCents: 0,
+      payCents: 0,
+      shopCents: 0,
+      percents: [],
+    };
+    dayPrev.count += 1;
+    dayPrev.serviceCents += row.serviceCents;
+    dayPrev.commissionCents += commissionCents;
+    dayPrev.tipCents += row.tipCents;
+    dayPrev.payCents += row.barberEarnCents;
+    dayPrev.shopCents += row.shopEarnCents;
+    if (!dayPrev.percents.includes(row.commissionPercent)) {
+      dayPrev.percents.push(row.commissionPercent);
+    }
+    byDayBarber.set(dayKey, dayPrev);
   }
+
+  const dayMap = new Map<
+    string,
+    {
+      date: string;
+      count: number;
+      serviceCents: number;
+      commissionCents: number;
+      tipCents: number;
+      payCents: number;
+      shopCents: number;
+      barbers: Array<{
+        barberId: string;
+        barberName: string;
+        count: number;
+        serviceCents: number;
+        commissionCents: number;
+        tipCents: number;
+        payCents: number;
+        shopCents: number;
+        percents: number[];
+      }>;
+    }
+  >();
+  for (const entry of byDayBarber.values()) {
+    const day = dayMap.get(entry.date) ?? {
+      date: entry.date,
+      count: 0,
+      serviceCents: 0,
+      commissionCents: 0,
+      tipCents: 0,
+      payCents: 0,
+      shopCents: 0,
+      barbers: [],
+    };
+    day.count += entry.count;
+    day.serviceCents += entry.serviceCents;
+    day.commissionCents += entry.commissionCents;
+    day.tipCents += entry.tipCents;
+    day.payCents += entry.payCents;
+    day.shopCents += entry.shopCents;
+    day.barbers.push({
+      barberId: entry.barberId,
+      barberName: entry.barberName,
+      count: entry.count,
+      serviceCents: entry.serviceCents,
+      commissionCents: entry.commissionCents,
+      tipCents: entry.tipCents,
+      payCents: entry.payCents,
+      shopCents: entry.shopCents,
+      percents: entry.percents.sort((a, b) => a - b),
+    });
+    dayMap.set(entry.date, day);
+  }
+
+  const byDay = [...dayMap.values()]
+    .map((day) => ({
+      ...day,
+      barbers: day.barbers.sort((a, b) => b.payCents - a.payCents),
+    }))
+    .sort((a, b) => b.date.localeCompare(a.date));
 
   const totals = {
     count: rows.length,
+    serviceCents: rows.reduce((s, r) => s + r.serviceCents, 0),
+    commissionCents: rows.reduce((s, r) => s + (r.barberEarnCents - r.tipCents), 0),
     barberEarnCents: rows.reduce((s, r) => s + r.barberEarnCents, 0),
     shopEarnCents: rows.reduce((s, r) => s + r.shopEarnCents, 0),
     tipCents: rows.reduce((s, r) => s + r.tipCents, 0),
+    dateFrom: dateFrom ?? null,
+    dateTo: dateTo ?? null,
     byBarber: [...byBarberMap.values()].sort((a, b) => b.barberEarnCents - a.barberEarnCents),
+    byDay,
   };
 
   return { rows, totals, currency: "MXN" as const };

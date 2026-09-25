@@ -22,6 +22,24 @@ function staffToken(req: { headers: { authorization?: string } }) {
   return auth.extractBearer(req.headers.authorization);
 }
 
+async function staff(req: { headers: { authorization?: string } }) {
+  return auth.getUserFromToken(staffToken(req));
+}
+
+function superOnly(user: { isSuperAdmin: boolean }) {
+  if (!user.isSuperAdmin) {
+    throw new AppError("UNAUTHORIZED", "Solo el administrador puede hacer esto.", 403);
+  }
+}
+
+function ownBarberId(user: { isSuperAdmin: boolean; barberId: string | null }) {
+  if (user.isSuperAdmin) return undefined;
+  if (!user.barberId) {
+    throw new AppError("UNAUTHORIZED", "Tu usuario no está ligado a un barbero.", 403);
+  }
+  return user.barberId;
+}
+
 apiRouter.get(
   "/health",
   asyncHandler(async (_req, res) => {
@@ -102,7 +120,7 @@ apiRouter.get(
 apiRouter.post(
   "/admin/services",
   asyncHandler(async (req, res) => {
-    auth.requireAuth(staffToken(req));
+    superOnly(await staff(req));
     const schema = z.object({
       id: z.string().optional(),
       code: z.string().min(2),
@@ -127,7 +145,7 @@ apiRouter.post(
 apiRouter.patch(
   "/admin/services/:id/active",
   asyncHandler(async (req, res) => {
-    auth.requireAuth(staffToken(req));
+    superOnly(await staff(req));
     const schema = z.object({ active: z.boolean() });
     const parsed = schema.safeParse(req.body);
     if (!parsed.success) throw new AppError("VALIDATION_ERROR", "Valor active inválido.", 422);
@@ -206,12 +224,90 @@ apiRouter.post(
   }),
 );
 
+apiRouter.post(
+  "/appointments/walk-in",
+  asyncHandler(async (req, res) => {
+    const user = await staff(req);
+    const schema = z.object({
+      serviceId: z.string().min(1),
+      barberId: z.string().min(1).optional(),
+      clientName: z.string().trim().min(2).max(80),
+      clientPhone: z.string().optional(),
+      quantity: z.number().int().min(1).max(2).optional(),
+      notes: z.string().trim().max(500).optional(),
+    });
+    const parsed = schema.safeParse(req.body);
+    if (!parsed.success) {
+      throw new AppError("VALIDATION_ERROR", "Revisa el corte en local.", 422);
+    }
+    const barberId = user.isSuperAdmin ? parsed.data.barberId : user.barberId;
+    if (!barberId) {
+      throw new AppError("VALIDATION_ERROR", "Elige el barbero de este corte.", 422);
+    }
+    const data = await booking.createWalkIn({
+      serviceId: parsed.data.serviceId,
+      barberId,
+      clientName: parsed.data.clientName,
+      clientPhone: parsed.data.clientPhone,
+      quantity: parsed.data.quantity,
+      notes: parsed.data.notes,
+    });
+    res.status(201).json({ ok: true, data, message: data.message });
+  }),
+);
+
 apiRouter.get(
   "/appointments",
   asyncHandler(async (req, res) => {
-    auth.requireAuth(staffToken(req));
+    const user = await staff(req);
+    const q = typeof req.query.q === "string" ? req.query.q : undefined;
     const date = typeof req.query.date === "string" ? req.query.date : undefined;
-    const data = await booking.listAppointments(date);
+    const dateFrom =
+      typeof req.query.dateFrom === "string"
+        ? req.query.dateFrom
+        : date;
+    const dateTo =
+      typeof req.query.dateTo === "string"
+        ? req.query.dateTo
+        : date;
+    const serviceId = typeof req.query.serviceId === "string" ? req.query.serviceId : undefined;
+    const barberId = typeof req.query.barberId === "string" ? req.query.barberId : undefined;
+    const status = typeof req.query.status === "string" ? req.query.status : undefined;
+    const hasCommissionRaw =
+      typeof req.query.hasCommission === "string" ? req.query.hasCommission : undefined;
+    const hasCommission =
+      hasCommissionRaw === "yes" || hasCommissionRaw === "no" ? hasCommissionRaw : undefined;
+    const minPrice =
+      typeof req.query.minPrice === "string" && req.query.minPrice !== ""
+        ? Math.round(Number(req.query.minPrice) * 100)
+        : undefined;
+    const maxPrice =
+      typeof req.query.maxPrice === "string" && req.query.maxPrice !== ""
+        ? Math.round(Number(req.query.maxPrice) * 100)
+        : undefined;
+
+    const filters = {
+      dateFrom,
+      dateTo,
+      q,
+      serviceId,
+      barberId: ownBarberId(user) ?? barberId,
+      status,
+      minPriceCents: Number.isFinite(minPrice) ? minPrice : undefined,
+      maxPriceCents: Number.isFinite(maxPrice) ? maxPrice : undefined,
+      hasCommission,
+    };
+
+    // Sin filtros de rango: comportamiento agenda (un día o todo)
+    const scopedBarber = ownBarberId(user);
+    let data =
+      date && !req.query.dateFrom && !req.query.dateTo && !q && !serviceId && !barberId && !scopedBarber && !status && !hasCommission && minPrice == null && maxPrice == null
+        ? await booking.listAppointments(date)
+        : await booking.searchAppointments(filters);
+    if (date && !req.query.dateFrom && !req.query.dateTo) {
+      data = data.slice().sort((a, b) => a.startAt.getTime() - b.startAt.getTime());
+    }
+
     res.json({ ok: true, currency: "MXN", data });
   }),
 );
@@ -219,7 +315,12 @@ apiRouter.get(
 apiRouter.patch(
   "/appointments/:id/status",
   asyncHandler(async (req, res) => {
-    auth.requireAuth(staffToken(req));
+    const user = await staff(req);
+    await booking.assertCanManageAppointment({
+      isSuperAdmin: user.isSuperAdmin,
+      barberId: user.barberId,
+      appointmentId: req.params.id,
+    });
     const schema = z.object({ status: AppointmentStatusEnum });
     const parsed = schema.safeParse(req.body);
     if (!parsed.success) throw new AppError("VALIDATION_ERROR", "Estado inválido.", 422);
@@ -231,7 +332,12 @@ apiRouter.patch(
 apiRouter.post(
   "/appointments/:id/cancel",
   asyncHandler(async (req, res) => {
-    auth.requireAuth(staffToken(req));
+    const user = await staff(req);
+    await booking.assertCanManageAppointment({
+      isSuperAdmin: user.isSuperAdmin,
+      barberId: user.barberId,
+      appointmentId: req.params.id,
+    });
     const data = await booking.cancelAppointment(req.params.id);
     res.json({ ok: true, data });
   }),
@@ -240,7 +346,12 @@ apiRouter.post(
 apiRouter.post(
   "/appointments/:id/reschedule",
   asyncHandler(async (req, res) => {
-    auth.requireAuth(staffToken(req));
+    const user = await staff(req);
+    await booking.assertCanManageAppointment({
+      isSuperAdmin: user.isSuperAdmin,
+      barberId: user.barberId,
+      appointmentId: req.params.id,
+    });
     const schema = z.object({ startAt: z.string().min(1) });
     const parsed = schema.safeParse(req.body);
     if (!parsed.success) throw new AppError("VALIDATION_ERROR", "Nueva hora requerida.", 422);
@@ -252,7 +363,12 @@ apiRouter.post(
 apiRouter.post(
   "/appointments/:id/pay",
   asyncHandler(async (req, res) => {
-    auth.requireAuth(staffToken(req));
+    const user = await staff(req);
+    await booking.assertCanManageAppointment({
+      isSuperAdmin: user.isSuperAdmin,
+      barberId: user.barberId,
+      appointmentId: req.params.id,
+    });
     const schema = z.object({
       method: z.enum(["CASH", "CARD", "TRANSFER", "OTHER"]).optional(),
       tipCents: z.number().int().min(0).optional(),
@@ -270,7 +386,7 @@ apiRouter.post(
 apiRouter.get(
   "/admin/stats",
   asyncHandler(async (req, res) => {
-    auth.requireAuth(staffToken(req));
+    superOnly(await staff(req));
     const date =
       typeof req.query.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(req.query.date)
         ? req.query.date
@@ -283,9 +399,17 @@ apiRouter.get(
 apiRouter.get(
   "/admin/commissions",
   asyncHandler(async (req, res) => {
-    auth.requireAuth(staffToken(req));
+    const user = await staff(req);
     const date = typeof req.query.date === "string" ? req.query.date : undefined;
-    const data = await catalog.listCommissions(date);
+    const dateFrom =
+      typeof req.query.dateFrom === "string" ? req.query.dateFrom : date;
+    const dateTo = typeof req.query.dateTo === "string" ? req.query.dateTo : date;
+    const data = await catalog.listCommissions({
+      date,
+      dateFrom,
+      dateTo,
+      barberId: ownBarberId(user),
+    });
     res.json({ ok: true, currency: "MXN", data: data.rows, totals: data.totals });
   }),
 );
@@ -293,16 +417,19 @@ apiRouter.get(
 apiRouter.get(
   "/admin/barbers",
   asyncHandler(async (req, res) => {
-    auth.requireAuth(staffToken(req));
+    const user = await staff(req);
     const data = await catalog.listAdminBarbers();
-    res.json({ ok: true, data });
+    const visible = user.isSuperAdmin
+      ? data
+      : data.filter((b) => b.id === user.barberId);
+    res.json({ ok: true, data: visible });
   }),
 );
 
 apiRouter.patch(
   "/admin/barbers/:id/commission",
   asyncHandler(async (req, res) => {
-    auth.requireAuth(staffToken(req));
+    superOnly(await staff(req));
     const schema = z.object({
       commissionPercent: z.number().min(0).max(100),
     });
@@ -362,7 +489,7 @@ apiRouter.post(
 apiRouter.get(
   "/admin/waitlist",
   asyncHandler(async (req, res) => {
-    auth.requireAuth(staffToken(req));
+    superOnly(await staff(req));
     const date = typeof req.query.date === "string" ? req.query.date : undefined;
     const data = await catalog.listWaitlist(date);
     res.json({ ok: true, data });
@@ -372,7 +499,7 @@ apiRouter.get(
 apiRouter.patch(
   "/admin/waitlist/:id",
   asyncHandler(async (req, res) => {
-    auth.requireAuth(staffToken(req));
+    superOnly(await staff(req));
     const schema = z.object({
       status: z.enum(["WAITING", "NOTIFIED", "BOOKED", "CANCELLED"]),
     });
@@ -386,7 +513,7 @@ apiRouter.patch(
 apiRouter.get(
   "/admin/products",
   asyncHandler(async (req, res) => {
-    auth.requireAuth(staffToken(req));
+    superOnly(await staff(req));
     const data = await catalog.listProducts();
     res.json({
       ok: true,
@@ -399,7 +526,7 @@ apiRouter.get(
 apiRouter.post(
   "/admin/products",
   asyncHandler(async (req, res) => {
-    auth.requireAuth(staffToken(req));
+    superOnly(await staff(req));
     const schema = z.object({
       id: z.string().optional(),
       sku: z.string().min(2),
@@ -421,7 +548,7 @@ apiRouter.post(
 apiRouter.post(
   "/admin/sales",
   asyncHandler(async (req, res) => {
-    auth.requireAuth(staffToken(req));
+    superOnly(await staff(req));
     const schema = z.object({
       items: z
         .array(
@@ -455,7 +582,7 @@ apiRouter.get(
 apiRouter.post(
   "/admin/reminders/process",
   asyncHandler(async (req, res) => {
-    auth.requireAuth(staffToken(req));
+    superOnly(await staff(req));
     const data = await notify.processDueReminders();
     res.json({ ok: true, data, message: `Procesados ${data.length} recordatorio(s).` });
   }),

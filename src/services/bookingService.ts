@@ -1,7 +1,8 @@
-import { AppointmentStatus } from "@prisma/client";
+import { AppointmentStatus, Prisma } from "@prisma/client";
 import {
   addMinutes,
   assertNoOverlap,
+  rangesOverlap,
   dayOfWeekInTz,
   effectiveDurationMin,
   effectivePriceCents,
@@ -141,9 +142,7 @@ async function computeAvailability(input: {
     bufferMin: BUFFER,
     currency: "MXN",
     byAppointmentOnly: window.byAppointmentOnly,
-    note: window.byAppointmentOnly
-      ? "Domingo solo por cita (11:00–16:00)."
-      : undefined,
+    note: window.byAppointmentOnly ? "Este día es solo por cita." : undefined,
     slots: slots.map((d) => d.toISOString()),
     policies: {
       cancelNoticeHours: branch.cancelNoticeHours,
@@ -218,9 +217,7 @@ export async function createAppointment(input: {
   ) {
     throw new AppError(
       "OUTSIDE_HOURS",
-      dow === 0
-        ? "Los domingos solo atendemos por cita de 11:00 a 16:00."
-        : "Ese horario está fuera del horario de atención (lun–sáb).",
+      "Ese horario está fuera del horario de atención (9:00 a 20:00).",
     );
   }
 
@@ -325,17 +322,270 @@ export async function createAppointment(input: {
   }
 }
 
-export async function listAppointments(date?: string) {
-  const where: { startAt?: { gte: Date; lt: Date } } = {};
-  if (date) {
-    const branch = await getBranch();
-    const start = startOfLocalDay(date, branch.timezone);
-    const end = addMinutes(start, 24 * 60);
-    where.startAt = { gte: start, lt: end };
+function localDayKey(date: Date, timeZone: string) {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(date);
+}
+
+function formatLocalTime(date: Date, timeZone: string) {
+  return new Intl.DateTimeFormat("es-MX", {
+    timeZone,
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(date);
+}
+
+export async function assertCanManageAppointment(input: {
+  isSuperAdmin: boolean;
+  barberId: string | null;
+  appointmentId: string;
+}) {
+  if (input.isSuperAdmin) return;
+  const appt = await prisma.appointment.findUnique({
+    where: { id: input.appointmentId },
+    select: { barberId: true },
+  });
+  if (!appt || !input.barberId || appt.barberId !== input.barberId) {
+    throw new AppError("UNAUTHORIZED", "Solo puedes gestionar tus propios cortes.", 403);
+  }
+}
+
+export async function createWalkIn(input: {
+  serviceId: string;
+  barberId: string;
+  clientName: string;
+  clientPhone?: string;
+  quantity?: number;
+  notes?: string;
+}) {
+  const quantity = input.quantity ?? 1;
+  if (quantity < 1 || quantity > 2) {
+    throw new AppError("VALIDATION_ERROR", "La cantidad debe ser 1 o 2.", 422);
   }
 
+  const service = await prisma.service.findUnique({ where: { id: input.serviceId } });
+  if (!service || !service.active) {
+    throw new AppError("SERVICE_INACTIVE", "Ese servicio no está disponible por ahora.");
+  }
+  if (!service.allowsQuantity && quantity !== 1) {
+    throw new AppError("VALIDATION_ERROR", "Este servicio no admite cantidad.", 422);
+  }
+
+  const barber = await prisma.barber.findUnique({ where: { id: input.barberId } });
+  if (!barber || !barber.active) {
+    throw new AppError("BARBER_UNAVAILABLE", "Ese barbero no está disponible.");
+  }
+
+  const branch = await getBranch();
+  const durationMin = effectiveDurationMin(service.durationMin, quantity);
+  const existing = await prisma.appointment.findMany({
+    where: {
+      barberId: barber.id,
+      status: { notIn: [AppointmentStatus.CANCELLED, AppointmentStatus.NO_SHOW] },
+      endAt: { gt: addMinutes(new Date(), -BUFFER) },
+    },
+    orderBy: { startAt: "asc" },
+    select: { startAt: true, endAt: true },
+  });
+
+  const dayKey = localDayKey(new Date(), branch.timezone);
+  const dayEnd = addMinutes(startOfLocalDay(dayKey, branch.timezone), 24 * 60);
+  let startAt = new Date();
+
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    if (startAt >= dayEnd) {
+      throw new AppError(
+        "SLOT_TAKEN",
+        "Hoy ya no hay un hueco libre para ese corte con ese barbero.",
+        409,
+      );
+    }
+    const endAt = addMinutes(startAt, durationMin);
+    if (assertNoOverlap({ startAt, endAt }, existing, BUFFER)) {
+      const priceCents = effectivePriceCents(service.priceCents, quantity);
+      const phoneDigits = (input.clientPhone ?? "").replace(/\D/g, "");
+      let phone = phoneDigits;
+      if (!phone) {
+        phone = `L${String(Math.floor(Math.random() * 1_000_000_000)).padStart(9, "0")}`;
+      } else if (!/^\d{10}$/.test(phone)) {
+        throw new AppError("VALIDATION_ERROR", "El WhatsApp debe tener 10 dígitos, o déjalo vacío.", 422);
+      }
+
+      let client = phone.startsWith("L")
+        ? null
+        : await prisma.client.findUnique({ where: { phone } });
+      if (client?.blocked) {
+        throw new AppError("CLIENT_BLOCKED", "No es posible registrar un corte con este teléfono.");
+      }
+      if (!client) {
+        client = await prisma.client.create({
+          data: { name: input.clientName.trim(), phone },
+        });
+      } else {
+        client = await prisma.client.update({
+          where: { id: client.id },
+          data: { name: input.clientName.trim() },
+        });
+      }
+
+      const appointment = await prisma.appointment.create({
+        data: {
+          startAt,
+          endAt,
+          status: AppointmentStatus.CHECKED_IN,
+          source: "WALK_IN",
+          quantity,
+          priceCents,
+          notes: input.notes,
+          clientId: client.id,
+          barberId: barber.id,
+          serviceId: service.id,
+          branchId: branch.id,
+          payment: {
+            create: {
+              amountCents: priceCents,
+              tipCents: 0,
+              method: "CASH",
+              status: "PENDING",
+            },
+          },
+        },
+        include: { client: true, barber: true, service: true, payment: true },
+      });
+      availabilityCache.invalidatePrefix("avail:");
+      const startedNow = attempt === 0;
+      return {
+        ...appointment,
+        currency: "MXN" as const,
+        message: startedNow
+          ? `Corte en local de ${formatLocalTime(startAt, branch.timezone)} a ${formatLocalTime(endAt, branch.timezone)}. Ese horario queda ocupado.`
+          : `No había lugar en este momento. El corte quedó de ${formatLocalTime(startAt, branch.timezone)} a ${formatLocalTime(endAt, branch.timezone)} y bloquea ese horario.`,
+      };
+    }
+
+    const blocker = existing.find((appt) =>
+      rangesOverlap(
+        { startAt, endAt: addMinutes(startAt, durationMin) },
+        { startAt: addMinutes(appt.startAt, -BUFFER), endAt: addMinutes(appt.endAt, BUFFER) },
+      ),
+    );
+    if (!blocker) break;
+    const next = addMinutes(blocker.endAt, BUFFER);
+    startAt = next.getTime() > startAt.getTime() ? next : addMinutes(startAt, BUFFER);
+  }
+
+  throw new AppError(
+    "SLOT_TAKEN",
+    "Ese barbero no tiene un hueco libre hoy para la duración de este corte.",
+    409,
+  );
+}
+
+export async function listAppointments(date?: string) {
+  const rows = await searchAppointments(date ? { dateFrom: date, dateTo: date } : {});
+  // Agenda del día: cronológico ascendente
+  return rows.slice().sort((a, b) => a.startAt.getTime() - b.startAt.getTime());
+}
+
+export type AppointmentSearchFilters = {
+  dateFrom?: string;
+  dateTo?: string;
+  q?: string;
+  serviceId?: string;
+  barberId?: string;
+  status?: string;
+  minPriceCents?: number;
+  maxPriceCents?: number;
+  hasCommission?: "yes" | "no";
+};
+
+const STATUS_SEARCH: Record<string, string> = {
+  SCHEDULED: "programada scheduled",
+  CONFIRMED: "confirmada confirmed",
+  CHECKED_IN: "check-in checkin llegada",
+  COMPLETED: "completada cobrada completed",
+  CANCELLED: "cancelada cancelled",
+  NO_SHOW: "no llego no show",
+};
+
+function foldSearch(value: string) {
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+}
+
+function matchSearchToken(token: string): Prisma.AppointmentWhereInput {
+  const digits = token.replace(/\D/g, "");
+  const or: Prisma.AppointmentWhereInput[] = [
+    { client: { name: { contains: token } } },
+    { client: { email: { contains: token } } },
+    { client: { notes: { contains: token } } },
+    { barber: { name: { contains: token } } },
+    { barber: { nickname: { contains: token } } },
+    { service: { name: { contains: token } } },
+    { notes: { contains: token } },
+  ];
+  if (digits.length >= 3) or.push({ client: { phone: { contains: digits } } });
+
+  const folded = foldSearch(token);
+  if (folded.length >= 4) {
+    for (const [status, label] of Object.entries(STATUS_SEARCH)) {
+      if (foldSearch(label).includes(folded)) {
+        or.push({ status: status as AppointmentStatus });
+      }
+    }
+  }
+
+  const numeric = token.replace(/[$,]/g, "");
+  if (/^\d+(\.\d{1,2})?$/.test(numeric)) {
+    or.push({ priceCents: Math.round(Number(numeric) * 100) });
+  }
+
+  return { OR: or };
+}
+
+export async function searchAppointments(filters: AppointmentSearchFilters = {}) {
+  const branch = await getBranch();
+  const and: Prisma.AppointmentWhereInput[] = [];
+
+  if (filters.dateFrom || filters.dateTo) {
+    const startAt: { gte?: Date; lt?: Date } = {};
+    if (filters.dateFrom) startAt.gte = startOfLocalDay(filters.dateFrom, branch.timezone);
+    if (filters.dateTo) {
+      startAt.lt = addMinutes(startOfLocalDay(filters.dateTo, branch.timezone), 24 * 60);
+    }
+    and.push({ startAt });
+  }
+
+  if (filters.serviceId) and.push({ serviceId: filters.serviceId });
+  if (filters.barberId) and.push({ barberId: filters.barberId });
+  if (filters.status && Object.values(AppointmentStatus).includes(filters.status as AppointmentStatus)) {
+    and.push({ status: filters.status as AppointmentStatus });
+  }
+  if (filters.minPriceCents != null || filters.maxPriceCents != null) {
+    and.push({
+      priceCents: {
+        ...(filters.minPriceCents != null ? { gte: filters.minPriceCents } : {}),
+        ...(filters.maxPriceCents != null ? { lte: filters.maxPriceCents } : {}),
+      },
+    });
+  }
+  if (filters.hasCommission === "yes") and.push({ commission: { isNot: null } });
+  if (filters.hasCommission === "no") and.push({ commission: { is: null } });
+
+  const tokens = (filters.q ?? "")
+    .trim()
+    .split(/\s+/)
+    .filter((token) => token.length > 0);
+  for (const token of tokens) and.push(matchSearchToken(token));
+
   return prisma.appointment.findMany({
-    where,
+    where: and.length ? { AND: and } : {},
     include: {
       client: true,
       barber: true,
@@ -343,7 +593,8 @@ export async function listAppointments(date?: string) {
       payment: true,
       commission: true,
     },
-    orderBy: { startAt: "asc" },
+    orderBy: { startAt: "desc" },
+    take: 250,
   });
 }
 
