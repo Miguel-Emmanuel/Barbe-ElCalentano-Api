@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { AppError } from "../lib/errors.js";
+import { prisma } from "../lib/prisma.js";
 import { asyncHandler } from "../middleware/errorHandler.js";
 import * as booking from "../services/bookingService.js";
 import * as catalog from "../services/catalogService.js";
@@ -43,11 +44,12 @@ function ownBarberId(user: { isSuperAdmin: boolean; barberId: string | null }) {
 apiRouter.get(
   "/health",
   asyncHandler(async (_req, res) => {
+    await prisma.$queryRaw`SELECT 1`;
     res.json({
       ok: true,
       service: "el-calentano-api",
       currency: "MXN",
-      phases: ["mvp", "fase2", "fase3", "fase4", "fase5"],
+      database: "postgres",
     });
   }),
 );
@@ -71,7 +73,7 @@ apiRouter.post(
 apiRouter.post(
   "/auth/logout",
   asyncHandler(async (req, res) => {
-    auth.logout(staffToken(req));
+    await auth.logout(staffToken(req));
     res.json({ ok: true });
   }),
 );
@@ -107,7 +109,7 @@ apiRouter.get(
 apiRouter.get(
   "/admin/services",
   asyncHandler(async (req, res) => {
-    auth.requireAuth(staffToken(req));
+    await auth.requireAuth(staffToken(req));
     const data = await catalog.listAllServices(true);
     res.json({
       ok: true,
@@ -275,7 +277,7 @@ apiRouter.get(
     const status = typeof req.query.status === "string" ? req.query.status : undefined;
     const hasCommissionRaw =
       typeof req.query.hasCommission === "string" ? req.query.hasCommission : undefined;
-    const hasCommission =
+    const hasCommission: "yes" | "no" | undefined =
       hasCommissionRaw === "yes" || hasCommissionRaw === "no" ? hasCommissionRaw : undefined;
     const minPrice =
       typeof req.query.minPrice === "string" && req.query.minPrice !== ""

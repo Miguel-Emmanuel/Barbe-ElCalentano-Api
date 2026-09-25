@@ -20,9 +20,10 @@ async function main() {
   await prisma.waitlistEntry.deleteMany();
   await prisma.client.deleteMany();
   await prisma.service.deleteMany();
+  await prisma.session.deleteMany();
+  await prisma.user.deleteMany();
   await prisma.barber.deleteMany();
   await prisma.businessHour.deleteMany();
-  await prisma.user.deleteMany();
   await prisma.branch.deleteMany();
 
   const branch = await prisma.branch.create({

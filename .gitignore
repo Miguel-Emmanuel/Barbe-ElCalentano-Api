@@ -3,5 +3,8 @@ dist
 .env
 prisma/dev.db
 prisma/dev.db-journal
+prisma/sqlite-export.json
+.pgdata
+.vercel
 coverage
 *.log

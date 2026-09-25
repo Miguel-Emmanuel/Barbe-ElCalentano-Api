@@ -1,0 +1,3 @@
+{
+  "buildCommand": "prisma generate && node scripts/with-postgres-env.mjs migrate deploy"
+}

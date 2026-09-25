@@ -5,7 +5,6 @@ import { prisma } from "../lib/prisma.js";
 
 export { hashPassword };
 
-const sessions = new Map<string, { userId: string; expiresAt: number }>();
 const SESSION_TTL_MS = 1000 * 60 * 60 * 12; // 12h
 
 function safeEqual(a: string, b: string): boolean {
@@ -25,7 +24,13 @@ export async function login(email: string, password: string) {
   }
 
   const token = randomBytes(32).toString("hex");
-  sessions.set(token, { userId: user.id, expiresAt: Date.now() + SESSION_TTL_MS });
+  await prisma.session.create({
+    data: {
+      token,
+      userId: user.id,
+      expiresAt: new Date(Date.now() + SESSION_TTL_MS),
+    },
+  });
 
   return {
     token,
@@ -41,24 +46,25 @@ export async function login(email: string, password: string) {
   };
 }
 
-export function logout(token: string | undefined) {
-  if (token) sessions.delete(token);
+export async function logout(token: string | undefined) {
+  if (!token) return;
+  await prisma.session.deleteMany({ where: { token } });
 }
 
-export function requireAuth(token: string | undefined) {
+export async function requireAuth(token: string | undefined) {
   if (!token) {
     throw new AppError("VALIDATION_ERROR", "Inicia sesión para continuar.", 401);
   }
-  const session = sessions.get(token);
-  if (!session || session.expiresAt < Date.now()) {
-    if (session) sessions.delete(token);
+  const session = await prisma.session.findUnique({ where: { token } });
+  if (!session || session.expiresAt.getTime() < Date.now()) {
+    if (session) await prisma.session.delete({ where: { id: session.id } });
     throw new AppError("VALIDATION_ERROR", "Tu sesión expiró. Vuelve a entrar.", 401);
   }
   return session.userId;
 }
 
 export async function getUserFromToken(token: string | undefined) {
-  const userId = requireAuth(token);
+  const userId = await requireAuth(token);
   const user = await prisma.user.findUnique({
     where: { id: userId },
     select: {

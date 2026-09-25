@@ -512,6 +512,10 @@ const STATUS_SEARCH: Record<string, string> = {
   NO_SHOW: "no llego no show",
 };
 
+function includes(token: string) {
+  return { contains: token, mode: "insensitive" as const };
+}
+
 function foldSearch(value: string) {
   return value
     .normalize("NFD")
@@ -522,13 +526,13 @@ function foldSearch(value: string) {
 function matchSearchToken(token: string): Prisma.AppointmentWhereInput {
   const digits = token.replace(/\D/g, "");
   const or: Prisma.AppointmentWhereInput[] = [
-    { client: { name: { contains: token } } },
-    { client: { email: { contains: token } } },
-    { client: { notes: { contains: token } } },
-    { barber: { name: { contains: token } } },
-    { barber: { nickname: { contains: token } } },
-    { service: { name: { contains: token } } },
-    { notes: { contains: token } },
+    { client: { name: includes(token) } },
+    { client: { email: includes(token) } },
+    { client: { notes: includes(token) } },
+    { barber: { name: includes(token) } },
+    { barber: { nickname: includes(token) } },
+    { service: { name: includes(token) } },
+    { notes: includes(token) },
   ];
   if (digits.length >= 3) or.push({ client: { phone: { contains: digits } } });
 
