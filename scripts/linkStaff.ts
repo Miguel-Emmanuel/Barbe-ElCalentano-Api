@@ -1,5 +1,5 @@
 import { PrismaClient, UserRole } from "@prisma/client";
-import { createHash } from "crypto";
+import { createHash, randomBytes } from "crypto";
 
 const prisma = new PrismaClient();
 
@@ -10,7 +10,10 @@ function hashPassword(password: string) {
 async function main() {
   const barbers = await prisma.barber.findMany();
   const bySlug = Object.fromEntries(barbers.map((b) => [b.slug, b]));
-  const passwordHash = hashPassword("calentano123");
+  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
+  const passwordHash = hashPassword(
+    [...randomBytes(12)].map((byte) => alphabet[byte % alphabet.length]).join(""),
+  );
 
   const ismael = bySlug["ismael-el-calentano"];
   if (ismael) {

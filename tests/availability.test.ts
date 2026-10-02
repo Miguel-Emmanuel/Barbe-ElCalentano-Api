@@ -17,6 +17,7 @@ import {
 import {
   assertStatusTransition,
   canMarkPaid,
+  clientManageState,
   isTerminalStatus,
   staffActionsFor,
 } from "../src/domain/appointmentStatus";
@@ -259,6 +260,18 @@ describe("appointment status transitions", () => {
     expect(canMarkPaid("CANCELLED")).toBe(false);
   });
 
+  it("lets the client manage only scheduled or confirmed visits", () => {
+    expect(clientManageState("SCHEDULED").canManage).toBe(true);
+    expect(clientManageState("CONFIRMED").canManage).toBe(true);
+    expect(clientManageState("CHECKED_IN")).toMatchObject({
+      canManage: false,
+      lockMessage: "Ya estás en la barbería. Un cambio lo ve el staff en la barra.",
+    });
+    expect(clientManageState("COMPLETED").lockMessage).toBe("Esta cita ya se atendió.");
+    expect(clientManageState("CANCELLED").lockMessage).toBe("Esta cita está cancelada.");
+    expect(clientManageState("NO_SHOW").canManage).toBe(false);
+  });
+
   it("exposes staff actions by status", () => {
     expect(staffActionsFor("SCHEDULED")).toMatchObject({
       canCheckIn: true,
@@ -291,7 +304,7 @@ describe("friendly errors", () => {
 
 describe("auth hash", () => {
   it("is deterministic", () => {
-    expect(hashPassword("calentano123")).toBe(hashPassword("calentano123"));
+    expect(hashPassword("prueba")).toBe(hashPassword("prueba"));
   });
 });
 

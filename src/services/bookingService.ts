@@ -15,6 +15,7 @@ import {
   assertStatusTransition,
   type AppointmentStatus as DomainStatus,
 } from "../domain/appointmentStatus.js";
+import { makePublicCode, makePublicToken } from "../domain/publicAccess.js";
 import {
   cancellationFeeCents,
   depositAmountCents,
@@ -24,14 +25,24 @@ import {
 import { availabilityCache } from "../lib/cache.js";
 import { AppError } from "../lib/errors.js";
 import { prisma } from "../lib/prisma.js";
-import { createAppointmentReminder } from "./notifyService.js";
+import {
+  createAppointmentReminder,
+  notifyAppointmentCancelled,
+  notifyAppointmentRescheduled,
+} from "./notifyService.js";
 import { assertValidTip, createDepositIntent } from "./paymentsService.js";
 
 const BUFFER = Number(process.env.BUFFER_MINUTES ?? 5);
 const SLOT_STEP = Number(process.env.SLOT_STEP_MINUTES ?? 10);
 
-function cacheKey(input: { date: string; serviceId: string; barberId: string; quantity: number }) {
-  return `avail:${input.date}:${input.barberId}:${input.serviceId}:${input.quantity}`;
+function cacheKey(input: {
+  date: string;
+  serviceId: string;
+  barberId: string;
+  quantity: number;
+  excludeAppointmentId?: string;
+}) {
+  return `avail:${input.date}:${input.barberId}:${input.serviceId}:${input.quantity}:${input.excludeAppointmentId ?? ""}`;
 }
 
 export async function listServices() {
@@ -45,6 +56,13 @@ export async function listBarbers() {
   return prisma.barber.findMany({
     where: { active: true },
     orderBy: { name: "asc" },
+    select: {
+      id: true,
+      name: true,
+      slug: true,
+      nickname: true,
+      specialties: true,
+    },
   });
 }
 
@@ -61,6 +79,7 @@ export async function getAvailability(input: {
   serviceId: string;
   barberId: string;
   quantity?: number;
+  excludeAppointmentId?: string;
 }) {
   const quantity = input.quantity ?? 1;
   const key = cacheKey({ ...input, quantity });
@@ -77,6 +96,7 @@ async function computeAvailability(input: {
   serviceId: string;
   barberId: string;
   quantity: number;
+  excludeAppointmentId?: string;
 }) {
   const service = await prisma.service.findUnique({ where: { id: input.serviceId } });
   if (!service || !service.active) {
@@ -112,16 +132,21 @@ async function computeAvailability(input: {
   const durationMin = effectiveDurationMin(service.durationMin, input.quantity);
   const dayEnd = addMinutes(dayStart, 24 * 60);
 
-  const existing = await prisma.appointment.findMany({
-    where: {
-      barberId: barber.id,
-      status: { notIn: [AppointmentStatus.CANCELLED, AppointmentStatus.NO_SHOW] },
-      startAt: { lt: dayEnd },
-      endAt: { gt: dayStart },
-    },
-    select: { startAt: true, endAt: true },
-    orderBy: { startAt: "asc" },
-  });
+  const [appointments, blocked] = await Promise.all([
+    prisma.appointment.findMany({
+      where: {
+        barberId: barber.id,
+        ...(input.excludeAppointmentId ? { id: { not: input.excludeAppointmentId } } : {}),
+        status: { notIn: [AppointmentStatus.CANCELLED, AppointmentStatus.NO_SHOW] },
+        startAt: { lt: dayEnd },
+        endAt: { gt: dayStart },
+      },
+      select: { startAt: true, endAt: true },
+      orderBy: { startAt: "asc" },
+    }),
+    blockedRanges(input.date, barber.id, branch.timezone),
+  ]);
+  const existing = [...appointments, ...blocked];
 
   const slots = findAvailableSlots({
     dayStart,
@@ -246,17 +271,24 @@ export async function createAppointment(input: {
   const lookback = addMinutes(startAt, -24 * 60);
   const lookahead = addMinutes(startAt, 24 * 60);
 
-  const existing = await prisma.appointment.findMany({
-    where: {
-      barberId: barber.id,
-      status: { notIn: [AppointmentStatus.CANCELLED, AppointmentStatus.NO_SHOW] },
-      startAt: { lt: lookahead },
-      endAt: { gt: lookback },
-    },
-    select: { startAt: true, endAt: true },
-  });
+  const dayKey = localDayKey(startAt, branch.timezone);
+  const [appointments, blocked] = await Promise.all([
+    prisma.appointment.findMany({
+      where: {
+        barberId: barber.id,
+        status: { notIn: [AppointmentStatus.CANCELLED, AppointmentStatus.NO_SHOW] },
+        startAt: { lt: lookahead },
+        endAt: { gt: lookback },
+      },
+      select: { startAt: true, endAt: true },
+    }),
+    blockedRanges(dayKey, barber.id, branch.timezone),
+  ]);
 
-  if (!assertNoOverlap({ startAt, endAt }, existing, BUFFER)) {
+  if (blocked.some((block) => rangesOverlap({ startAt, endAt }, block))) {
+    throw new AppError("SLOT_TAKEN", "Ese horario está cerrado.", 409);
+  }
+  if (!assertNoOverlap({ startAt, endAt }, appointments, BUFFER)) {
     throw new AppError("SLOT_TAKEN", "Ese horario ya no está disponible. Elige otro.", 409);
   }
 
@@ -275,6 +307,8 @@ export async function createAppointment(input: {
         priceCents,
         depositCents,
         notes: input.notes,
+        publicToken: makePublicToken(),
+        publicCode: makePublicCode(),
         clientId: client.id,
         barberId: barber.id,
         serviceId: service.id,
@@ -297,7 +331,11 @@ export async function createAppointment(input: {
     });
 
     availabilityCache.invalidatePrefix("avail:");
-    await createAppointmentReminder(appointment.id, startAt, client.phone);
+    try {
+      await createAppointmentReminder(appointment, branch.timezone);
+    } catch (error) {
+      console.error("whatsapp", error instanceof Error ? error.message : error);
+    }
 
     const deposit = await createDepositIntent({
       appointmentId: appointment.id,
@@ -320,6 +358,17 @@ export async function createAppointment(input: {
     if (e instanceof AppError) throw e;
     throw new AppError("CONFLICT", "No se pudo guardar la cita. Intenta otro horario.", 409);
   }
+}
+
+async function blockedRanges(date: string, barberId: string, timeZone: string) {
+  const rows = await prisma.blockedWindow.findMany({
+    where: { date, OR: [{ barberId: null }, { barberId }] },
+  });
+  const dayStart = startOfLocalDay(date, timeZone);
+  return rows.map((row) => ({
+    startAt: addMinutes(dayStart, row.startMin),
+    endAt: addMinutes(dayStart, row.endMin),
+  }));
 }
 
 function localDayKey(date: Date, timeZone: string) {
@@ -382,17 +431,21 @@ export async function createWalkIn(input: {
 
   const branch = await getBranch();
   const durationMin = effectiveDurationMin(service.durationMin, quantity);
-  const existing = await prisma.appointment.findMany({
-    where: {
-      barberId: barber.id,
-      status: { notIn: [AppointmentStatus.CANCELLED, AppointmentStatus.NO_SHOW] },
-      endAt: { gt: addMinutes(new Date(), -BUFFER) },
-    },
-    orderBy: { startAt: "asc" },
-    select: { startAt: true, endAt: true },
-  });
-
   const dayKey = localDayKey(new Date(), branch.timezone);
+  const [appointments, blocked] = await Promise.all([
+    prisma.appointment.findMany({
+      where: {
+        barberId: barber.id,
+        status: { notIn: [AppointmentStatus.CANCELLED, AppointmentStatus.NO_SHOW] },
+        endAt: { gt: addMinutes(new Date(), -BUFFER) },
+      },
+      orderBy: { startAt: "asc" },
+      select: { startAt: true, endAt: true },
+    }),
+    blockedRanges(dayKey, barber.id, branch.timezone),
+  ]);
+  const existing = [...appointments, ...blocked];
+
   const dayEnd = addMinutes(startOfLocalDay(dayKey, branch.timezone), 24 * 60);
   let startAt = new Date();
 
@@ -661,6 +714,11 @@ export async function cancelAppointment(id: string) {
   });
 
   availabilityCache.invalidatePrefix("avail:");
+  try {
+    await notifyAppointmentCancelled(updated, appt.branch.timezone, fee / 100);
+  } catch (error) {
+    console.error("whatsapp", error instanceof Error ? error.message : error);
+  }
 
   return {
     ...updated,
@@ -677,7 +735,7 @@ export async function cancelAppointment(id: string) {
   };
 }
 
-export async function rescheduleAppointment(id: string, startAtIso: string) {
+export async function rescheduleAppointment(id: string, startAtIso: string, nextBarberId?: string) {
   const appt = await prisma.appointment.findUnique({
     where: { id },
     include: { service: true, barber: true },
@@ -690,6 +748,18 @@ export async function rescheduleAppointment(id: string, startAtIso: string) {
   const startAt = new Date(startAtIso);
   if (Number.isNaN(startAt.getTime())) {
     throw new AppError("VALIDATION_ERROR", "Nueva hora inválida.", 422);
+  }
+  if (startAt.getTime() <= Date.now()) {
+    throw new AppError("SLOT_IN_PAST", "No puedes pasar la cita a un horario que ya pasó.", 422);
+  }
+
+  const barberId = nextBarberId || appt.barberId;
+  const barber =
+    barberId === appt.barberId
+      ? appt.barber
+      : await prisma.barber.findUnique({ where: { id: barberId } });
+  if (!barber || !barber.active) {
+    throw new AppError("BARBER_UNAVAILABLE", "Ese barbero no está disponible.");
   }
 
   const durationMin = Math.round((appt.endAt.getTime() - appt.startAt.getTime()) / 60000);
@@ -719,27 +789,39 @@ export async function rescheduleAppointment(id: string, startAtIso: string) {
 
   const lookback = addMinutes(startAt, -24 * 60);
   const lookahead = addMinutes(startAt, 24 * 60);
-  const existing = await prisma.appointment.findMany({
-    where: {
-      barberId: appt.barberId,
-      id: { not: appt.id },
-      status: { notIn: [AppointmentStatus.CANCELLED, AppointmentStatus.NO_SHOW] },
-      startAt: { lt: lookahead },
-      endAt: { gt: lookback },
-    },
-    select: { startAt: true, endAt: true },
-  });
+  const dayKey = localDayKey(startAt, branch.timezone);
+  const [appointments, blocked] = await Promise.all([
+    prisma.appointment.findMany({
+      where: {
+        barberId: barber.id,
+        id: { not: appt.id },
+        status: { notIn: [AppointmentStatus.CANCELLED, AppointmentStatus.NO_SHOW] },
+        startAt: { lt: lookahead },
+        endAt: { gt: lookback },
+      },
+      select: { startAt: true, endAt: true },
+    }),
+    blockedRanges(dayKey, barber.id, branch.timezone),
+  ]);
 
-  if (!assertNoOverlap({ startAt, endAt }, existing, BUFFER)) {
+  if (blocked.some((block) => rangesOverlap({ startAt, endAt }, block))) {
+    throw new AppError("SLOT_TAKEN", "Ese horario está cerrado.", 409);
+  }
+  if (!assertNoOverlap({ startAt, endAt }, appointments, BUFFER)) {
     throw new AppError("SLOT_TAKEN", "Ese horario ya no está disponible.", 409);
   }
 
   const updated = await prisma.appointment.update({
     where: { id },
-    data: { startAt, endAt },
+    data: { startAt, endAt, barberId: barber.id },
     include: { client: true, barber: true, service: true, payment: true },
   });
   availabilityCache.invalidatePrefix("avail:");
+  try {
+    await notifyAppointmentRescheduled(updated, branch.timezone);
+  } catch (error) {
+    console.error("whatsapp", error instanceof Error ? error.message : error);
+  }
   return updated;
 }
 

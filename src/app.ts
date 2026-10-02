@@ -17,6 +17,16 @@ function corsOrigin(origin: string | undefined, callback: (err: Error | null, al
     return;
   }
   try {
+    const host = new URL(origin).hostname;
+    if (host === "localhost" || host === "127.0.0.1" || host.startsWith("192.168.") || host.startsWith("10.")) {
+      callback(null, true);
+      return;
+    }
+  } catch {
+    callback(null, false);
+    return;
+  }
+  try {
     if (new URL(origin).hostname.endsWith(".vercel.app")) {
       callback(null, true);
       return;

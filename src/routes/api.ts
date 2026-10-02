@@ -7,6 +7,7 @@ import * as booking from "../services/bookingService.js";
 import * as catalog from "../services/catalogService.js";
 import * as auth from "../services/authService.js";
 import * as notify from "../services/notifyService.js";
+import { publicRouter } from "./publicAppointments.js";
 
 const AppointmentStatusEnum = z.enum([
   "SCHEDULED",
@@ -18,6 +19,8 @@ const AppointmentStatusEnum = z.enum([
 ]);
 
 export const apiRouter = Router();
+
+apiRouter.use("/public", publicRouter);
 
 function staffToken(req: { headers: { authorization?: string } }) {
   return auth.extractBearer(req.headers.authorization);
@@ -428,6 +431,76 @@ apiRouter.get(
   }),
 );
 
+apiRouter.post(
+  "/admin/barbers",
+  asyncHandler(async (req, res) => {
+    superOnly(await staff(req));
+    const schema = z.object({
+      name: z.string().trim().min(2).max(80),
+      nickname: z.string().trim().max(40).optional(),
+      phone: z
+        .string()
+        .optional()
+        .transform((value) => (value ?? "").replace(/\D/g, ""))
+        .transform((digits) => {
+          if (!digits) return null;
+          if (digits.length === 12 && digits.startsWith("52")) return digits.slice(2);
+          if (digits.length === 13 && digits.startsWith("521")) return digits.slice(3);
+          return digits;
+        })
+        .refine((value) => value === null || /^\d{10}$/.test(value), "Teléfono MX de 10 dígitos"),
+    });
+    const parsed = schema.safeParse(req.body);
+    if (!parsed.success) {
+      throw new AppError("VALIDATION_ERROR", "Revisa el nombre y el WhatsApp del barbero.", 422);
+    }
+    const data = await catalog.createBarber(parsed.data);
+    res.status(201).json({ ok: true, data });
+  }),
+);
+
+apiRouter.get(
+  "/admin/blocked",
+  asyncHandler(async (req, res) => {
+    superOnly(await staff(req));
+    const date = typeof req.query.date === "string" ? req.query.date : "";
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+      throw new AppError("VALIDATION_ERROR", "Elige una fecha.", 422);
+    }
+    const data = await catalog.listBlockedWindows(date);
+    res.json({ ok: true, data });
+  }),
+);
+
+apiRouter.post(
+  "/admin/blocked",
+  asyncHandler(async (req, res) => {
+    superOnly(await staff(req));
+    const schema = z.object({
+      date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+      startMin: z.number().int().min(0).max(24 * 60),
+      endMin: z.number().int().min(0).max(24 * 60),
+      barberId: z.string().min(1).nullable().optional(),
+      note: z.string().trim().max(120).optional(),
+    });
+    const parsed = schema.safeParse(req.body);
+    if (!parsed.success) {
+      throw new AppError("VALIDATION_ERROR", "Revisa el horario que quieres cerrar.", 422);
+    }
+    const data = await catalog.createBlockedWindow(parsed.data);
+    res.status(201).json({ ok: true, data });
+  }),
+);
+
+apiRouter.delete(
+  "/admin/blocked/:id",
+  asyncHandler(async (req, res) => {
+    superOnly(await staff(req));
+    const data = await catalog.deleteBlockedWindow(req.params.id);
+    res.json({ ok: true, data });
+  }),
+);
+
 apiRouter.patch(
   "/admin/barbers/:id/commission",
   asyncHandler(async (req, res) => {
@@ -443,6 +516,31 @@ apiRouter.patch(
       req.params.id,
       parsed.data.commissionPercent,
     );
+    res.json({ ok: true, data });
+  }),
+);
+
+apiRouter.patch(
+  "/admin/barbers/:id/phone",
+  asyncHandler(async (req, res) => {
+    superOnly(await staff(req));
+    const schema = z.object({
+      phone: z
+        .string()
+        .transform((value) => value.replace(/\D/g, ""))
+        .transform((digits) => {
+          if (!digits) return null;
+          if (digits.length === 12 && digits.startsWith("52")) return digits.slice(2);
+          if (digits.length === 13 && digits.startsWith("521")) return digits.slice(3);
+          return digits;
+        })
+        .refine((value) => value === null || /^\d{10}$/.test(value), "Teléfono MX de 10 dígitos"),
+    });
+    const parsed = schema.safeParse(req.body);
+    if (!parsed.success) {
+      throw new AppError("VALIDATION_ERROR", "El WhatsApp del barbero debe tener 10 dígitos.", 422);
+    }
+    const data = await catalog.updateBarberPhone(req.params.id, parsed.data.phone);
     res.json({ ok: true, data });
   }),
 );

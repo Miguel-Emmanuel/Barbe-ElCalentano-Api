@@ -42,6 +42,29 @@ export function isTerminalStatus(status: AppointmentStatus): boolean {
   return status === "COMPLETED" || status === "CANCELLED" || status === "NO_SHOW";
 }
 
+/** What the client can do from the public link. Check-in and later are read-only. */
+export function clientManageState(status: AppointmentStatus): {
+  canManage: boolean;
+  lockMessage: string | null;
+} {
+  if (status === "SCHEDULED" || status === "CONFIRMED") {
+    return { canManage: true, lockMessage: null };
+  }
+  if (status === "CHECKED_IN") {
+    return {
+      canManage: false,
+      lockMessage: "Ya estás en la barbería. Un cambio lo ve el staff en la barra.",
+    };
+  }
+  if (status === "COMPLETED") {
+    return { canManage: false, lockMessage: "Esta cita ya se atendió." };
+  }
+  if (status === "CANCELLED") {
+    return { canManage: false, lockMessage: "Esta cita está cancelada." };
+  }
+  return { canManage: false, lockMessage: "Esta cita se marcó como no asististe." };
+}
+
 /** Staff UI action flags derived from status. */
 export function staffActionsFor(status: AppointmentStatus) {
   const terminal = isTerminalStatus(status);

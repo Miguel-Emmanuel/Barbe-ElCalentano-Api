@@ -70,13 +70,14 @@ model Branch {
   createdAt              DateTime @default(now())
   updatedAt              DateTime @updatedAt
 
-  barbers       Barber[]
-  services      Service[]
-  appointments  Appointment[]
-  businessHours BusinessHour[]
-  waitlist      WaitlistEntry[]
-  products      Product[]
-  sales         Sale[]
+  barbers        Barber[]
+  services       Service[]
+  appointments   Appointment[]
+  businessHours  BusinessHour[]
+  waitlist       WaitlistEntry[]
+  products       Product[]
+  sales          Sale[]
+  blockedWindows BlockedWindow[]
 }
 
 model Barber {
@@ -85,6 +86,7 @@ model Barber {
   slug              String   @unique
   nickname          String?
   specialties       String?
+  phone             String?
   commissionPercent Float    @default(50)
   active            Boolean  @default(true)
   branchId          String
@@ -92,9 +94,10 @@ model Barber {
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
 
-  appointments Appointment[]
-  waitlist     WaitlistEntry[]
-  user         User?
+  appointments   Appointment[]
+  waitlist       WaitlistEntry[]
+  blockedWindows BlockedWindow[]
+  user           User?
 }
 
 model Service {
@@ -168,6 +171,8 @@ model Appointment {
   depositCents         Int               @default(0)
   cancellationFeeCents Int               @default(0)
   cancelledAt          DateTime?
+  publicToken          String?           @unique
+  publicCode           String?           @unique
   clientId             String
   barberId             String
   serviceId            String
@@ -279,6 +284,22 @@ model BusinessHour {
   branch            Branch  @relation(fields: [branchId], references: [id])
 
   @@unique([branchId, dayOfWeek])
+}
+
+model BlockedWindow {
+  id        String   @id @default(cuid())
+  branchId  String
+  barberId  String?
+  date      String
+  startMin  Int
+  endMin    Int
+  note      String?
+  createdAt DateTime @default(now())
+
+  branch Branch  @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  barber Barber? @relation(fields: [barberId], references: [id], onDelete: Cascade)
+
+  @@index([date])
 }
 
 model User {

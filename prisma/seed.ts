@@ -1,10 +1,18 @@
 import { PrismaClient, UserRole } from "@prisma/client";
-import { createHash } from "crypto";
+import { createHash, randomBytes } from "crypto";
 
 const prisma = new PrismaClient();
 
 function hashPassword(password: string): string {
   return createHash("sha256").update(`el-calentano:${password}`).digest("hex");
+}
+
+function initialPassword(label: string): string {
+  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
+  const bytes = randomBytes(12);
+  const password = [...bytes].map((byte) => alphabet[byte % alphabet.length]).join("");
+  console.log(`Cuenta nueva ${label}. Contraseña inicial: ${password}`);
+  return password;
 }
 
 async function main() {
@@ -38,7 +46,7 @@ async function main() {
       timezone: "America/Mexico_City",
       cancelNoticeHours: 24,
       lateCancelFeePercent: 50,
-      graceMinutes: 15,
+      graceMinutes: 10,
       depositRequired: false,
       depositPercent: 0,
       loyaltyPointsPer100Mxn: 1,
@@ -152,7 +160,7 @@ async function main() {
       name: "Ismael",
       role: UserRole.ADMIN,
       isSuperAdmin: true,
-      passwordHash: hashPassword("calentano123"),
+      passwordHash: hashPassword(initialPassword("admin@elcalentano.mx")),
       barberId: bySlug["ismael-el-calentano"]?.id,
     },
   });
@@ -164,7 +172,7 @@ async function main() {
         name: "Alex Ibarra",
         role: UserRole.BARBER,
         isSuperAdmin: false,
-        passwordHash: hashPassword("calentano123"),
+        passwordHash: hashPassword(initialPassword("alex@elcalentano.mx")),
         barberId: bySlug["alex-ibarra"].id,
       },
     });
@@ -177,7 +185,7 @@ async function main() {
         name: "Zaira Garduño",
         role: UserRole.BARBER,
         isSuperAdmin: false,
-        passwordHash: hashPassword("calentano123"),
+        passwordHash: hashPassword(initialPassword("zaira@elcalentano.mx")),
         barberId: bySlug["zaira-garduno"].id,
       },
     });
@@ -213,7 +221,6 @@ async function main() {
   });
 
   console.log("Seed OK — Barber Shop EL CALENTANO");
-  console.log("Admin: admin@elcalentano.mx / calentano123");
 }
 
 main()

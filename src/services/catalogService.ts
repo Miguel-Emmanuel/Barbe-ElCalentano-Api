@@ -1,3 +1,4 @@
+import { availabilityCache } from "../lib/cache.js";
 import { AppError } from "../lib/errors.js";
 import { prisma } from "../lib/prisma.js";
 import { getBranch } from "./bookingService.js";
@@ -538,9 +539,113 @@ export async function listCommissions(opts?: {
   return { rows, totals, currency: "MXN" as const };
 }
 
+function slugify(name: string) {
+  const base = name
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 40);
+  return base || "barbero";
+}
+
+export async function createBarber(input: {
+  name: string;
+  nickname?: string;
+  phone?: string | null;
+}) {
+  const branch = await prisma.branch.findFirst();
+  if (!branch) throw new AppError("NOT_FOUND", "No hay sucursal.", 404);
+  const name = input.name.trim();
+  if (name.length < 2) {
+    throw new AppError("VALIDATION_ERROR", "Escribe el nombre del barbero.", 422);
+  }
+  let slug = slugify(name);
+  const taken = await prisma.barber.findMany({
+    where: { slug: { startsWith: slug } },
+    select: { slug: true },
+  });
+  if (taken.some((row) => row.slug === slug)) {
+    let n = 2;
+    while (taken.some((row) => row.slug === `${slug}-${n}`)) n += 1;
+    slug = `${slug}-${n}`;
+  }
+  return prisma.barber.create({
+    data: {
+      name,
+      slug,
+      nickname: input.nickname?.trim() || null,
+      phone: input.phone ?? null,
+      commissionPercent: 50,
+      active: true,
+      branchId: branch.id,
+    },
+  });
+}
+
+export async function listBlockedWindows(date: string) {
+  return prisma.blockedWindow.findMany({
+    where: { date },
+    include: { barber: { select: { id: true, name: true } } },
+    orderBy: [{ startMin: "asc" }],
+  });
+}
+
+export async function createBlockedWindow(input: {
+  date: string;
+  startMin: number;
+  endMin: number;
+  barberId?: string | null;
+  note?: string;
+}) {
+  if (input.startMin >= input.endMin) {
+    throw new AppError("VALIDATION_ERROR", "La hora de cierre tiene que ser después de la de inicio.", 422);
+  }
+  const branch = await prisma.branch.findFirst();
+  if (!branch) throw new AppError("NOT_FOUND", "No hay sucursal.", 404);
+  if (input.barberId) {
+    const barber = await prisma.barber.findUnique({ where: { id: input.barberId } });
+    if (!barber) throw new AppError("NOT_FOUND", "Barbero no encontrado.", 404);
+  }
+  const row = await prisma.blockedWindow.create({
+    data: {
+      branchId: branch.id,
+      barberId: input.barberId || null,
+      date: input.date,
+      startMin: input.startMin,
+      endMin: input.endMin,
+      note: input.note?.trim() || null,
+    },
+    include: { barber: { select: { id: true, name: true } } },
+  });
+  availabilityCache.invalidatePrefix("avail:");
+  return row;
+}
+
+export async function deleteBlockedWindow(id: string) {
+  const row = await prisma.blockedWindow.findUnique({ where: { id } });
+  if (!row) throw new AppError("NOT_FOUND", "Ese horario cerrado ya no existe.", 404);
+  await prisma.blockedWindow.delete({ where: { id } });
+  availabilityCache.invalidatePrefix("avail:");
+  return { id };
+}
+
 export async function listAdminBarbers() {
   return prisma.barber.findMany({
     orderBy: { name: "asc" },
+  });
+}
+
+export async function updateBarberPhone(id: string, phone: string | null) {
+  if (phone !== null && !/^\d{10}$/.test(phone)) {
+    throw new AppError("VALIDATION_ERROR", "El WhatsApp del barbero debe tener 10 dígitos.", 422);
+  }
+  const barber = await prisma.barber.findUnique({ where: { id } });
+  if (!barber) throw new AppError("NOT_FOUND", "Barbero no encontrado.", 404);
+  return prisma.barber.update({
+    where: { id },
+    data: { phone },
   });
 }
 
