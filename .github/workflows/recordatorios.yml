@@ -1,0 +1,19 @@
+name: Recordatorios de citas
+
+on:
+  schedule:
+    - cron: "7 * * * *"
+  workflow_dispatch:
+
+jobs:
+  procesar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Procesar recordatorios pendientes
+        env:
+          RECORDATORIOS_SECRET: ${{ secrets.RECORDATORIOS_SECRET }}
+        run: |
+          curl --fail-with-body --retry 3 --retry-delay 20 --max-time 120 \
+            -X POST "https://el-calentano-api.onrender.com/api/cron/recordatorios" \
+            -H "x-recordatorios-secret: ${RECORDATORIOS_SECRET}"
