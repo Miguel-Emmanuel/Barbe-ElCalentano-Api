@@ -23,6 +23,7 @@ async function main() {
   await prisma.tip.deleteMany();
   await prisma.payment.deleteMany();
   await prisma.reminderJob.deleteMany();
+  await prisma.whatsappMessage.deleteMany();
   await prisma.notificationLog.deleteMany();
   await prisma.appointment.deleteMany();
   await prisma.waitlistEntry.deleteMany();

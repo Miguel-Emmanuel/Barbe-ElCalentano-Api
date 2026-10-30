@@ -131,9 +131,11 @@ model Client {
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
-  appointments Appointment[]
-  waitlist     WaitlistEntry[]
-  sales        Sale[]
+  appointments     Appointment[]
+  waitlist         WaitlistEntry[]
+  sales            Sale[]
+  whatsappMessages WhatsappMessage[]
+  lastInboundAt    DateTime?
 
   @@unique([phone])
 }
@@ -184,9 +186,10 @@ model Appointment {
   barber     Barber      @relation(fields: [barberId], references: [id])
   service    Service     @relation(fields: [serviceId], references: [id])
   branch     Branch      @relation(fields: [branchId], references: [id])
-  payment    Payment?
-  tip        Tip?
-  commission Commission?
+  payment          Payment?
+  tip              Tip?
+  commission       Commission?
+  whatsappMessages WhatsappMessage[]
 
   @@index([barberId, startAt, endAt])
   @@index([branchId, startAt])
@@ -337,6 +340,25 @@ model NotificationLog {
   status    String
   meta      String?
   createdAt DateTime @default(now())
+}
+
+model WhatsappMessage {
+  id            String       @id @default(cuid())
+  citaId        String?
+  cita          Appointment? @relation(fields: [citaId], references: [id], onDelete: SetNull)
+  clientId      String?
+  cliente       Client?      @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  direction     String
+  templateName  String?
+  body          String       @default("")
+  status        String
+  metaMessageId String?
+  errorDetail   String?
+  createdAt     DateTime     @default(now())
+
+  @@index([citaId])
+  @@index([clientId])
+  @@index([metaMessageId])
 }
 
 model ReminderJob {

@@ -1,182 +1,191 @@
-import {
-  barberTemplate,
-  clientTemplate,
-  resolveBarberPhone,
-  type ClientNoticeKind,
-} from "../domain/whatsapp.js";
+import { barberTemplate, clientTemplate, resolverTelefonoBarbero, type TipoAvisoCliente } from "../domain/whatsapp/index.js";
 import { prisma } from "../lib/prisma.js";
-import { sendWhatsAppTemplate } from "./whatsappCloud.js";
+import { sendTemplate } from "./whatsappService.js";
 
-type VisitParty = {
+type Visita = {
   id: string;
   startAt: Date;
   publicCode: string | null;
-  client: { name: string; phone: string };
+  client: { id?: string; name: string; phone: string };
   barber: { name: string; slug: string; phone: string | null };
   service: { name: string };
 };
 
-const BARBER_HEADLINE: Record<Exclude<ClientNoticeKind, "REMINDER">, string> = {
+const HORAS_RECORDATORIO = 24;
+
+const ENCABEZADO_BARBERO: Record<Exclude<TipoAvisoCliente, "REMINDER">, string> = {
   CONFIRMATION: "Nueva cita",
   RESCHEDULE: "Cita movida",
   CANCEL: "Cita cancelada",
 };
 
-async function logSend(input: {
-  to: string;
-  body: string;
-  status: string;
-  meta: Record<string, unknown>;
+function momentoRecordatorio(inicio: Date) {
+  return new Date(inicio.getTime() - HORAS_RECORDATORIO * 60 * 60 * 1000);
+}
+
+async function entregar(entrada: {
+  destino: string;
+  plantilla: string;
+  idioma: string;
+  parametros: string[];
+  citaId: string;
+  clientId?: string | null;
 }) {
-  await prisma.notificationLog.create({
-    data: {
-      channel: "WHATSAPP",
-      to: input.to,
-      body: input.body,
-      status: input.status,
-      meta: JSON.stringify(input.meta),
-    },
+  const resultado = await sendTemplate({
+    destino: entrada.destino,
+    nombrePlantilla: entrada.plantilla,
+    idioma: entrada.idioma,
+    parametros: entrada.parametros,
+    citaId: entrada.citaId,
+    clientId: entrada.clientId,
   });
-}
-
-async function deliver(input: {
-  to: string;
-  template: string;
-  language: string;
-  parameters: string[];
-  meta: Record<string, unknown>;
-}) {
-  const preview = input.parameters.join(" · ");
-  try {
-    const result = await sendWhatsAppTemplate(input);
-    await logSend({
-      to: input.to,
-      body: preview,
-      status: result.status,
-      meta: { ...input.meta, template: input.template, detail: result.detail ?? null },
-    });
-  } catch (error) {
-    await logSend({
-      to: input.to,
-      body: preview,
-      status: "FAILED",
-      meta: {
-        ...input.meta,
-        template: input.template,
-        detail: error instanceof Error ? error.message : "error",
-      },
-    });
+  if (resultado.status === "FAILED" || resultado.status === "FALLBACK_MOCK_NO_WHATSAPP_CREDENTIALS") {
+    throw new Error(resultado.detail ?? resultado.status);
   }
+  return resultado;
 }
 
-export async function notifyVisit(input: {
-  kind: ClientNoticeKind;
-  visit: VisitParty;
+export async function notifyVisit(entrada: {
+  kind: TipoAvisoCliente;
+  visit: Visita;
   timeZone: string;
   feeMxn?: number;
   alertBarber?: boolean;
 }) {
-  const client = clientTemplate(input.kind, {
-    clientName: input.visit.client.name,
-    serviceName: input.visit.service.name,
-    barberName: input.visit.barber.name,
-    startAt: input.visit.startAt,
-    timeZone: input.timeZone,
-    publicCode: input.visit.publicCode,
-    feeMxn: input.feeMxn,
+  const cliente = clientTemplate(entrada.kind, {
+    clientName: entrada.visit.client.name,
+    serviceName: entrada.visit.service.name,
+    barberName: entrada.visit.barber.name,
+    startAt: entrada.visit.startAt,
+    timeZone: entrada.timeZone,
+    publicCode: entrada.visit.publicCode,
+    feeMxn: entrada.feeMxn,
   });
 
-  await deliver({
-    to: input.visit.client.phone,
-    ...client,
-    meta: { appointmentId: input.visit.id, type: input.kind, audience: "CLIENT" },
+  await entregar({
+    destino: entrada.visit.client.phone,
+    plantilla: cliente.template,
+    idioma: cliente.language,
+    parametros: cliente.parameters,
+    citaId: entrada.visit.id,
+    clientId: entrada.visit.client.id,
   });
 
-  if (!input.alertBarber || input.kind === "REMINDER") return;
+  if (!entrada.alertBarber || entrada.kind === "REMINDER") return;
 
-  const barberTo = resolveBarberPhone(input.visit.barber.slug, input.visit.barber.phone);
-  if (!barberTo) {
-    await logSend({
-      to: input.visit.barber.slug,
-      body: "Sin WhatsApp de barbero",
-      status: "SKIPPED_NO_BARBER_PHONE",
-      meta: { appointmentId: input.visit.id, type: input.kind, audience: "BARBER" },
+  const destinoBarbero = resolverTelefonoBarbero(entrada.visit.barber.slug, entrada.visit.barber.phone);
+  if (!destinoBarbero) {
+    await prisma.notificationLog.create({
+      data: {
+        channel: "WHATSAPP",
+        to: entrada.visit.barber.slug,
+        body: "Sin WhatsApp de barbero",
+        status: "SKIPPED_NO_BARBER_PHONE",
+        meta: JSON.stringify({
+          citaId: entrada.visit.id,
+          tipo: entrada.kind,
+          audiencia: "BARBER",
+        }),
+      },
     });
     return;
   }
 
   const staff = barberTemplate({
-    headline: BARBER_HEADLINE[input.kind],
-    clientName: input.visit.client.name,
-    serviceName: input.visit.service.name,
-    startAt: input.visit.startAt,
-    timeZone: input.timeZone,
-    publicCode: input.visit.publicCode,
+    headline: ENCABEZADO_BARBERO[entrada.kind],
+    clientName: entrada.visit.client.name,
+    serviceName: entrada.visit.service.name,
+    startAt: entrada.visit.startAt,
+    timeZone: entrada.timeZone,
+    publicCode: entrada.visit.publicCode,
   });
 
-  await deliver({
-    to: barberTo,
-    ...staff,
-    meta: { appointmentId: input.visit.id, type: input.kind, audience: "BARBER" },
+  await entregar({
+    destino: destinoBarbero,
+    plantilla: staff.template,
+    idioma: staff.language,
+    parametros: staff.parameters,
+    citaId: entrada.visit.id,
   });
 }
 
-export async function createAppointmentReminder(visit: VisitParty, timeZone: string) {
-  const twoHoursBefore = new Date(visit.startAt.getTime() - 2 * 60 * 60 * 1000);
-  const runAt = twoHoursBefore < new Date() ? new Date() : twoHoursBefore;
+async function programarRecordatorio(citaId: string, inicio: Date) {
+  const correrEn = momentoRecordatorio(inicio);
+  const pendiente = await prisma.reminderJob.findFirst({
+    where: { appointmentId: citaId, status: "PENDING" },
+  });
 
-  const job = await prisma.reminderJob.create({
+  if (correrEn.getTime() <= Date.now()) {
+    if (pendiente) {
+      await prisma.reminderJob.update({
+        where: { id: pendiente.id },
+        data: { status: "SKIPPED", channel: "WHATSAPP" },
+      });
+    }
+    return;
+  }
+
+  if (pendiente) {
+    await prisma.reminderJob.update({
+      where: { id: pendiente.id },
+      data: { runAt: correrEn, channel: "WHATSAPP" },
+    });
+    return;
+  }
+
+  await prisma.reminderJob.create({
     data: {
-      appointmentId: visit.id,
-      runAt,
+      appointmentId: citaId,
+      runAt: correrEn,
       channel: "WHATSAPP",
       status: "PENDING",
     },
   });
-
-  await notifyVisit({ kind: "CONFIRMATION", visit, timeZone, alertBarber: true });
-  return job;
 }
 
-export async function notifyAppointmentCancelled(visit: VisitParty, timeZone: string, feeMxn: number) {
+export async function createAppointmentReminder(visita: Visita, zonaHoraria: string) {
+  await programarRecordatorio(visita.id, visita.startAt);
+  await notifyVisit({ kind: "CONFIRMATION", visit: visita, timeZone: zonaHoraria, alertBarber: true });
+  return prisma.reminderJob.findFirst({
+    where: { appointmentId: visita.id },
+    orderBy: { createdAt: "desc" },
+  });
+}
+
+export async function notifyAppointmentCancelled(visita: Visita, zonaHoraria: string, cargoMxn: number) {
   await prisma.reminderJob.updateMany({
-    where: { appointmentId: visit.id, status: "PENDING" },
+    where: { appointmentId: visita.id, status: "PENDING" },
     data: { status: "SKIPPED" },
   });
-  await notifyVisit({ kind: "CANCEL", visit, timeZone, feeMxn, alertBarber: true });
+  await notifyVisit({ kind: "CANCEL", visit: visita, timeZone: zonaHoraria, feeMxn: cargoMxn, alertBarber: true });
 }
 
-export async function notifyAppointmentRescheduled(visit: VisitParty, timeZone: string) {
-  const twoHoursBefore = new Date(visit.startAt.getTime() - 2 * 60 * 60 * 1000);
-  const runAt = twoHoursBefore < new Date() ? new Date() : twoHoursBefore;
-  await prisma.reminderJob.updateMany({
-    where: { appointmentId: visit.id, status: "PENDING" },
-    data: { runAt, channel: "WHATSAPP" },
-  });
-  await notifyVisit({ kind: "RESCHEDULE", visit, timeZone, alertBarber: true });
+export async function notifyAppointmentRescheduled(visita: Visita, zonaHoraria: string) {
+  await programarRecordatorio(visita.id, visita.startAt);
+  await notifyVisit({ kind: "RESCHEDULE", visit: visita, timeZone: zonaHoraria, alertBarber: true });
 }
 
-export async function processDueReminders(limit = 20) {
-  const due = await prisma.reminderJob.findMany({
+export async function processDueReminders(limite = 20) {
+  const vencidos = await prisma.reminderJob.findMany({
     where: { status: "PENDING", runAt: { lte: new Date() } },
-    take: limit,
+    take: limite,
     orderBy: { runAt: "asc" },
   });
 
-  const results = [];
-  for (const job of due) {
+  const resultados = [];
+  for (const trabajo of vencidos) {
     try {
-      const appt = await prisma.appointment.findUnique({
-        where: { id: job.appointmentId },
+      const cita = await prisma.appointment.findUnique({
+        where: { id: trabajo.appointmentId },
         include: { client: true, service: true, barber: true, branch: true },
       });
       if (
-        !appt ||
-        ["CANCELLED", "NO_SHOW", "COMPLETED"].includes(appt.status) ||
-        appt.startAt.getTime() <= Date.now()
+        !cita ||
+        ["CANCELLED", "NO_SHOW", "COMPLETED"].includes(cita.status) ||
+        cita.startAt.getTime() <= Date.now()
       ) {
         await prisma.reminderJob.update({
-          where: { id: job.id },
+          where: { id: trabajo.id },
           data: { status: "SKIPPED" },
         });
         continue;
@@ -184,27 +193,27 @@ export async function processDueReminders(limit = 20) {
 
       await notifyVisit({
         kind: "REMINDER",
-        visit: appt,
-        timeZone: appt.branch.timezone,
+        visit: cita,
+        timeZone: cita.branch.timezone,
         alertBarber: false,
       });
 
-      results.push(
+      resultados.push(
         await prisma.reminderJob.update({
-          where: { id: job.id },
-          data: { status: "SENT", attempts: job.attempts + 1 },
+          where: { id: trabajo.id },
+          data: { status: "SENT", attempts: trabajo.attempts + 1 },
         }),
       );
-    } catch (e) {
+    } catch (error) {
       await prisma.reminderJob.update({
-        where: { id: job.id },
+        where: { id: trabajo.id },
         data: {
-          attempts: job.attempts + 1,
-          lastError: e instanceof Error ? e.message : "error",
-          status: job.attempts + 1 >= 3 ? "FAILED" : "PENDING",
+          attempts: trabajo.attempts + 1,
+          lastError: error instanceof Error ? error.message : "error",
+          status: trabajo.attempts + 1 >= 3 ? "FAILED" : "PENDING",
         },
       });
     }
   }
-  return results;
+  return resultados;
 }

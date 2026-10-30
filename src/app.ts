@@ -1,6 +1,8 @@
 import cors from "cors";
 import express from "express";
+import type { Request } from "express";
 import { apiRouter } from "./routes/api.js";
+import { webhookRouter, webhookYCloudRouter } from "./routes/webhook.js";
 import { errorHandler } from "./middleware/errorHandler.js";
 
 function corsOrigin(origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) {
@@ -41,6 +43,13 @@ function corsOrigin(origin: string | undefined, callback: (err: Error | null, al
 export function createApp() {
   const app = express();
   app.use(cors({ origin: corsOrigin }));
+  const jsonConCuerpoCrudo = express.json({
+    verify: (req, _res, buf) => {
+      (req as Request & { cuerpoCrudo?: Buffer }).cuerpoCrudo = Buffer.from(buf);
+    },
+  });
+  app.use("/webhook/whatsapp", jsonConCuerpoCrudo, webhookRouter);
+  app.use("/webhook/ycloud", jsonConCuerpoCrudo, webhookYCloudRouter);
   app.use(express.json());
   app.get("/", (_req, res) => {
     res.json({

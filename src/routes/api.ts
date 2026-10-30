@@ -6,6 +6,7 @@ import { asyncHandler } from "../middleware/errorHandler.js";
 import * as booking from "../services/bookingService.js";
 import * as catalog from "../services/catalogService.js";
 import * as auth from "../services/authService.js";
+import { secretoCoincide } from "../domain/whatsapp/firma.js";
 import * as notify from "../services/notifyService.js";
 import { publicRouter } from "./publicAppointments.js";
 
@@ -683,6 +684,19 @@ apiRouter.post(
   "/admin/reminders/process",
   asyncHandler(async (req, res) => {
     superOnly(await staff(req));
+    const data = await notify.processDueReminders();
+    res.json({ ok: true, data, message: `Procesados ${data.length} recordatorio(s).` });
+  }),
+);
+
+apiRouter.post(
+  "/cron/recordatorios",
+  asyncHandler(async (req, res) => {
+    const esperado = process.env.RECORDATORIOS_SECRET ?? "";
+    const recibido = req.header("x-recordatorios-secret") ?? "";
+    if (!secretoCoincide(recibido, esperado)) {
+      throw new AppError("UNAUTHORIZED", "Secreto de recordatorios inválido.", 401);
+    }
     const data = await notify.processDueReminders();
     res.json({ ok: true, data, message: `Procesados ${data.length} recordatorio(s).` });
   }),
