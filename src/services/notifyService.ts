@@ -1,4 +1,11 @@
-import { barberTemplate, clientTemplate, resolverTelefonoBarbero, type TipoAvisoCliente } from "../domain/whatsapp/index.js";
+import {
+  barberTemplate,
+  clientTemplate,
+  destinosAvisoStaff,
+  resolverTelefonoBarbero,
+  telefonosStaffGeneral,
+  type TipoAvisoCliente,
+} from "../domain/whatsapp/index.js";
 import { prisma } from "../lib/prisma.js";
 import { sendTemplate } from "./whatsappService.js";
 
@@ -14,7 +21,7 @@ type Visita = {
 const HORAS_RECORDATORIO = 24;
 
 const ENCABEZADO_BARBERO: Record<Exclude<TipoAvisoCliente, "REMINDER">, string> = {
-  CONFIRMATION: "Nueva cita",
+  CONFIRMATION: "Cita nueva",
   RESCHEDULE: "Cita movida",
   CANCEL: "Cita cancelada",
 };
@@ -50,6 +57,7 @@ export async function notifyVisit(entrada: {
   visit: Visita;
   timeZone: string;
   feeMxn?: number;
+  feePercent?: number;
   alertBarber?: boolean;
 }) {
   const cliente = clientTemplate(entrada.kind, {
@@ -60,6 +68,7 @@ export async function notifyVisit(entrada: {
     timeZone: entrada.timeZone,
     publicCode: entrada.visit.publicCode,
     feeMxn: entrada.feeMxn,
+    feePercent: entrada.feePercent,
   });
 
   await entregar({
@@ -88,25 +97,34 @@ export async function notifyVisit(entrada: {
         }),
       },
     });
-    return;
   }
+
+  const destinos = destinosAvisoStaff(destinoBarbero, telefonosStaffGeneral());
+  if (destinos.length === 0) return;
 
   const staff = barberTemplate({
     headline: ENCABEZADO_BARBERO[entrada.kind],
     clientName: entrada.visit.client.name,
     serviceName: entrada.visit.service.name,
+    barberName: entrada.visit.barber.name,
     startAt: entrada.visit.startAt,
     timeZone: entrada.timeZone,
     publicCode: entrada.visit.publicCode,
   });
 
-  await entregar({
-    destino: destinoBarbero,
-    plantilla: staff.template,
-    idioma: staff.language,
-    parametros: staff.parameters,
-    citaId: entrada.visit.id,
-  });
+  for (const destino of destinos) {
+    try {
+      await entregar({
+        destino,
+        plantilla: staff.template,
+        idioma: staff.language,
+        parametros: staff.parameters,
+        citaId: entrada.visit.id,
+      });
+    } catch (error) {
+      console.error("whatsapp staff", error instanceof Error ? error.message : error);
+    }
+  }
 }
 
 async function programarRecordatorio(citaId: string, inicio: Date) {
@@ -152,12 +170,24 @@ export async function createAppointmentReminder(visita: Visita, zonaHoraria: str
   });
 }
 
-export async function notifyAppointmentCancelled(visita: Visita, zonaHoraria: string, cargoMxn: number) {
+export async function notifyAppointmentCancelled(
+  visita: Visita,
+  zonaHoraria: string,
+  cargoMxn: number,
+  cargoPorcentaje?: number,
+) {
   await prisma.reminderJob.updateMany({
     where: { appointmentId: visita.id, status: "PENDING" },
     data: { status: "SKIPPED" },
   });
-  await notifyVisit({ kind: "CANCEL", visit: visita, timeZone: zonaHoraria, feeMxn: cargoMxn, alertBarber: true });
+  await notifyVisit({
+    kind: "CANCEL",
+    visit: visita,
+    timeZone: zonaHoraria,
+    feeMxn: cargoMxn,
+    feePercent: cargoPorcentaje,
+    alertBarber: true,
+  });
 }
 
 export async function notifyAppointmentRescheduled(visita: Visita, zonaHoraria: string) {

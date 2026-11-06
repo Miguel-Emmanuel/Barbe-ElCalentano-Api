@@ -8,6 +8,11 @@ export const WHATSAPP_TEMPLATES = {
   barber: () => process.env.WHATSAPP_TEMPLATE_BARBER ?? "aviso_barbero",
 };
 
+const ENLACE_CITA = "https://el-calentano.vercel.app/cita";
+const DIRECCION = "C. Miguel Hidalgo 4A, Metepec";
+
+const EJEMPLO_CITA = ["Miguel", "Viernes 31 de octubre", "4:00 p.m.", "Corte de cabello", "Alex Ibarra", "3ERRVC"];
+
 /**
  * Textos UTILITY (es_MX) que se registran en Meta. El orden de {{n}} es fijo
  * y Meta rechaza plantillas que empiezan o terminan con una variable.
@@ -15,33 +20,106 @@ export const WHATSAPP_TEMPLATES = {
 export const TEXTOS_PLANTILLAS: Array<{ nombre: string; texto: string; ejemplo: string[] }> = [
   {
     nombre: "cita_confirmada",
-    texto:
-      "Hola {{1}}. Tu cita en Barber Shop EL CALENTANO quedó agendada: {{2}} con {{3}}, el {{4}} a las {{5}}. Tu número de reserva es {{6}}. Puedes consultarla en el-calentano.vercel.app/cita. Pago en el local.",
-    ejemplo: ["Miguel", "Corte de cabello", "Alex Ibarra", "viernes 31 de octubre", "4:00 p.m.", "3ERRVC"],
+    texto: [
+      "¡Hola, {{1}}! 👋",
+      "",
+      "Tu cita en *Barber Shop EL CALENTANO* ha quedado agendada. 💈",
+      "",
+      "📅 *Fecha:* {{2}}",
+      "🕓 *Hora:* {{3}}",
+      "✂️ *Servicio:* _{{4}}_",
+      "👤 *Barbero:* {{5}}",
+      "🎫 *Reserva:* `{{6}}`",
+      `📍 *Dirección:* ${DIRECCION}`,
+      "",
+      `Puedes consultar los detalles en: ${ENLACE_CITA}`,
+      "",
+      "_El pago se realiza en el local._",
+      "",
+      "¡Te esperamos! ✨",
+    ].join("\n"),
+    ejemplo: EJEMPLO_CITA,
   },
   {
     nombre: "cita_recordatorio",
-    texto:
-      "Hola {{1}}. Te recordamos tu cita en EL CALENTANO mañana: {{2}} con {{3}}, el {{4}} a las {{5}}. Código {{6}}. Pago en el local.",
-    ejemplo: ["Miguel", "Corte de cabello", "Alex Ibarra", "viernes 31 de octubre", "4:00 p.m.", "3ERRVC"],
+    texto: [
+      "¡Hola, {{1}}! 👋",
+      "",
+      "Te recordamos que *mañana* tienes cita en *Barber Shop EL CALENTANO*. 💈",
+      "",
+      "📅 *Fecha:* {{2}}",
+      "🕓 *Hora:* {{3}}",
+      "✂️ *Servicio:* _{{4}}_",
+      "👤 *Barbero:* {{5}}",
+      "🎫 *Reserva:* `{{6}}`",
+      `📍 *Dirección:* ${DIRECCION}`,
+      "",
+      `Si necesitas cambiarla, entra a: ${ENLACE_CITA}`,
+      "",
+      "_El pago se realiza en el local._",
+      "",
+      "¡Te esperamos! ✨",
+    ].join("\n"),
+    ejemplo: EJEMPLO_CITA,
   },
   {
     nombre: "cita_reagendada",
-    texto:
-      "Hola {{1}}. Tu cita en EL CALENTANO cambió: {{2}} con {{3}}, el {{4}} a las {{5}}. Código {{6}}. Entra a el-calentano.vercel.app/cita si quieres verla. Pago en el local.",
-    ejemplo: ["Miguel", "Corte de cabello", "Alex Ibarra", "sábado 1 de noviembre", "11:00 a.m.", "3ERRVC"],
+    texto: [
+      "¡Hola, {{1}}! 👋",
+      "",
+      "Tu cita en *Barber Shop EL CALENTANO* cambió. 🔄 Estos son los nuevos datos:",
+      "",
+      "📅 *Fecha:* {{2}}",
+      "🕓 *Hora:* {{3}}",
+      "✂️ *Servicio:* _{{4}}_",
+      "👤 *Barbero:* {{5}}",
+      "🎫 *Reserva:* `{{6}}`",
+      "",
+      `Puedes consultar los detalles en: ${ENLACE_CITA}`,
+      "",
+      "_El pago se realiza en el local._",
+      "",
+      "¡Te esperamos! ✨",
+    ].join("\n"),
+    ejemplo: ["Miguel", "Sábado 1 de noviembre", "11:00 a.m.", "Corte de cabello", "Alex Ibarra", "3ERRVC"],
   },
   {
     nombre: "cita_cancelada",
-    texto:
-      "Hola {{1}}. Tu cita del {{2}} a las {{3}} ({{4}} con {{5}}) quedó cancelada. {{6}} Gracias por avisar a Barber Shop EL CALENTANO.",
-    ejemplo: ["Miguel", "viernes 31 de octubre", "4:00 p.m.", "Corte de cabello", "Alex Ibarra", "Sin cargo."],
+    texto: [
+      "¡Hola, {{1}}! 👋",
+      "",
+      "Tu cita en *Barber Shop EL CALENTANO* ha sido cancelada. ❌",
+      "",
+      "📅 *Fecha:* {{2}}",
+      "🕓 *Hora:* {{3}}",
+      "✂️ *Servicio:* _{{4}}_",
+      "👤 *Barbero:* {{5}}",
+      "",
+      "💳 *Cargo:* {{6}}",
+      "",
+      "Cuando quieras, agenda de nuevo en: https://el-calentano.vercel.app",
+      "",
+      "¡Gracias por avisarnos! ✨",
+    ].join("\n"),
+    ejemplo: ["Miguel", "Viernes 31 de octubre", "4:00 p.m.", "Corte de cabello", "Alex Ibarra", "Sin cargo."],
   },
   {
     nombre: "aviso_barbero",
-    texto:
-      "Hola, este es un aviso de la agenda de Barber Shop EL CALENTANO. Movimiento: {{1}}. Cliente: {{2}}. Servicio: {{3}}, el {{4}} a las {{5}}. Número de reserva {{6}}. Revisa los detalles en el panel del staff.",
-    ejemplo: ["Nueva cita", "Miguel", "Corte de cabello", "viernes 31 de octubre", "4:00 p.m.", "3ERRVC"],
+    texto: [
+      "*🔔 NUEVO MOVIMIENTO DE AGENDA*",
+      "",
+      "Se ha registrado un nuevo evento en *Barber Shop EL CALENTANO*.",
+      "",
+      "📌 *Movimiento:* {{1}}",
+      "👤 *Cliente:* {{2}}",
+      "✂️ *Servicio:* {{3}}",
+      "💈 *Barbero:* {{4}}",
+      "🕓 *Horario:* {{5}} a las {{6}}",
+      "🎫 *Reserva:* `{{7}}`",
+      "",
+      "_Revisa los detalles completos en el panel del staff._",
+    ].join("\n"),
+    ejemplo: ["Cita nueva", "Miguel", "Corte de cabello", "Alex Ibarra", "Viernes 31 de octubre", "4:00 p.m.", "3ERRVC"],
   },
 ];
 
@@ -53,6 +131,7 @@ export type DatosCitaAviso = {
   zonaHoraria: string;
   codigoPublico: string | null;
   cargoMxn?: number;
+  cargoPorcentaje?: number;
 };
 
 export type PayloadPlantilla = {
@@ -74,12 +153,15 @@ export function templateParam(valor: string): string {
 }
 
 export function formatearFechaVisita(fecha: Date, zonaHoraria: string) {
-  return new Intl.DateTimeFormat("es-MX", {
+  const texto = new Intl.DateTimeFormat("es-MX", {
     timeZone: zonaHoraria,
     weekday: "long",
     day: "numeric",
     month: "long",
-  }).format(fecha);
+  })
+    .format(fecha)
+    .replace(",", "");
+  return texto.charAt(0).toUpperCase() + texto.slice(1);
 }
 
 export function formatearHoraVisita(fecha: Date, zonaHoraria: string) {
@@ -90,29 +172,31 @@ export function formatearHoraVisita(fecha: Date, zonaHoraria: string) {
   }).format(fecha);
 }
 
+export function textoCargo(cargoMxn?: number, cargoPorcentaje?: number) {
+  if (!cargoMxn || cargoMxn <= 0) return "Sin cargo.";
+  const porcentaje = cargoPorcentaje && cargoPorcentaje > 0 ? ` (${Math.round(cargoPorcentaje)}%)` : "";
+  return `$${Math.round(cargoMxn)} MXN${porcentaje}, se cobra en el local.`;
+}
+
 export function parametrosCita(datos: DatosCitaAviso): string[] {
   return [
     templateParam(datos.nombreCliente),
-    templateParam(datos.nombreServicio),
-    templateParam(datos.nombreBarbero),
     templateParam(formatearFechaVisita(datos.inicio, datos.zonaHoraria)),
     templateParam(formatearHoraVisita(datos.inicio, datos.zonaHoraria)),
+    templateParam(datos.nombreServicio),
+    templateParam(datos.nombreBarbero),
     templateParam(datos.codigoPublico ?? "-"),
   ];
 }
 
 export function parametrosCancelacion(datos: DatosCitaAviso): string[] {
-  const cargo =
-    datos.cargoMxn && datos.cargoMxn > 0
-      ? `Hay un cargo de $${Math.round(datos.cargoMxn)} MXN que se cobra en el local.`
-      : "Sin cargo.";
   return [
     templateParam(datos.nombreCliente),
     templateParam(formatearFechaVisita(datos.inicio, datos.zonaHoraria)),
     templateParam(formatearHoraVisita(datos.inicio, datos.zonaHoraria)),
     templateParam(datos.nombreServicio),
     templateParam(datos.nombreBarbero),
-    templateParam(cargo),
+    templateParam(textoCargo(datos.cargoMxn, datos.cargoPorcentaje)),
   ];
 }
 
@@ -153,6 +237,7 @@ export function plantillaBarbero(entrada: {
   encabezado: string;
   nombreCliente: string;
   nombreServicio: string;
+  nombreBarbero: string;
   inicio: Date;
   zonaHoraria: string;
   codigoPublico: string | null;
@@ -161,6 +246,7 @@ export function plantillaBarbero(entrada: {
     templateParam(entrada.encabezado),
     templateParam(entrada.nombreCliente),
     templateParam(entrada.nombreServicio),
+    templateParam(entrada.nombreBarbero),
     templateParam(formatearFechaVisita(entrada.inicio, entrada.zonaHoraria)),
     templateParam(formatearHoraVisita(entrada.inicio, entrada.zonaHoraria)),
     templateParam(entrada.codigoPublico ?? "-"),
@@ -179,6 +265,7 @@ export function clientTemplate(
     timeZone: string;
     publicCode: string | null;
     feeMxn?: number;
+    feePercent?: number;
   },
 ) {
   const datos: DatosCitaAviso = {
@@ -189,6 +276,7 @@ export function clientTemplate(
     zonaHoraria: entrada.timeZone,
     codigoPublico: entrada.publicCode,
     cargoMxn: entrada.feeMxn,
+    cargoPorcentaje: entrada.feePercent,
   };
   const payload =
     tipo === "CANCEL"
@@ -209,6 +297,7 @@ export function barberTemplate(entrada: {
   headline: string;
   clientName: string;
   serviceName: string;
+  barberName: string;
   startAt: Date;
   timeZone: string;
   publicCode: string | null;
@@ -217,6 +306,7 @@ export function barberTemplate(entrada: {
     encabezado: entrada.headline,
     nombreCliente: entrada.clientName,
     nombreServicio: entrada.serviceName,
+    nombreBarbero: entrada.barberName,
     inicio: entrada.startAt,
     zonaHoraria: entrada.timeZone,
     codigoPublico: entrada.publicCode,

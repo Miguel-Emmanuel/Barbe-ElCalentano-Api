@@ -557,7 +557,7 @@ export type AppointmentSearchFilters = {
 };
 
 const STATUS_SEARCH: Record<string, string> = {
-  SCHEDULED: "programada scheduled",
+  SCHEDULED: "agendada programada scheduled",
   CONFIRMED: "confirmada confirmed",
   CHECKED_IN: "check-in checkin llegada",
   COMPLETED: "completada cobrada completed",
@@ -715,7 +715,7 @@ export async function cancelAppointment(id: string) {
 
   availabilityCache.invalidatePrefix("avail:");
   try {
-    await notifyAppointmentCancelled(updated, appt.branch.timezone, fee / 100);
+    await notifyAppointmentCancelled(updated, appt.branch.timezone, fee / 100, appt.branch.lateCancelFeePercent);
   } catch (error) {
     console.error("whatsapp", error instanceof Error ? error.message : error);
   }

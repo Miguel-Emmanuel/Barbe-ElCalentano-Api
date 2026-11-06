@@ -39,3 +39,15 @@ export function telefonoBarberoDesdeEntorno(slug: string): string | null {
 export function resolverTelefonoBarbero(slug: string, guardado: string | null | undefined) {
   return destinatarioMeta(guardado) ?? destinatarioMeta(telefonoBarberoDesdeEntorno(slug));
 }
+
+/** Números que reciben todos los avisos del staff (por ejemplo el dueño). */
+export function telefonosStaffGeneral(crudo = process.env.WHATSAPP_STAFF_PHONES ?? ""): string[] {
+  return crudo
+    .split(",")
+    .map((parte) => destinatarioMeta(parte.trim()))
+    .filter((telefono): telefono is string => Boolean(telefono));
+}
+
+export function destinosAvisoStaff(telefonoBarbero: string | null, generales: string[]): string[] {
+  return [...new Set([telefonoBarbero, ...generales].filter((telefono): telefono is string => Boolean(telefono)))];
+}

@@ -8,8 +8,11 @@ import {
   canSendFreeText,
   firmaValida,
   firmaYCloudValida,
+  destinosAvisoStaff,
   telefonoE164,
+  telefonosStaffGeneral,
 } from "../src/domain/whatsapp/index.js";
+import { TEXTOS_PLANTILLAS } from "../src/domain/whatsapp/templates.js";
 
 describe("whatsAppRecipient", () => {
   it("acepta 10 dígitos y les pone 52", () => {
@@ -42,8 +45,20 @@ describe("plantillas de cita", () => {
     });
     expect(built.template).toBe("cita_confirmada");
     expect(built.parameters[0]).toBe("Cliente Vista");
+    expect(built.parameters[1]).toBe("Miércoles 30 de septiembre");
+    expect(built.parameters[3]).toBe("Corte de cabello");
+    expect(built.parameters[4]).toBe("Alex Ibarra");
     expect(built.parameters[5]).toBe("3ERRVC");
     expect(built.parameters.join("")).not.toMatch(/[\r\n]/);
+  });
+
+  it("cada plantilla trae tantas variables como su texto pide", () => {
+    for (const plantilla of TEXTOS_PLANTILLAS) {
+      const variables = plantilla.texto.match(/\{\{\d+\}\}/g) ?? [];
+      expect(variables.length).toBe(plantilla.ejemplo.length);
+      expect(plantilla.texto.trim().startsWith("{{")).toBe(false);
+      expect(plantilla.texto.trim().endsWith("}}")).toBe(false);
+    }
   });
 
   it("la cancelación tardía menciona el cargo del local", () => {
@@ -55,22 +70,33 @@ describe("plantillas de cita", () => {
       timeZone: "America/Mexico_City",
       publicCode: "3ERRVC",
       feeMxn: 60,
+      feePercent: 50,
     });
     expect(built.template).toBe("cita_cancelada");
-    expect(built.parameters[5]).toContain("$60 MXN");
+    expect(built.parameters[5]).toBe("$60 MXN (50%), se cobra en el local.");
   });
 
-  it("el aviso del barbero no va vacío", () => {
+  it("el aviso del barbero lleva barbero y no va vacío", () => {
     const built = barberTemplate({
-      headline: "Nueva cita",
+      headline: "Cita nueva",
       clientName: "Cliente Vista",
       serviceName: "Corte de cabello",
+      barberName: "Alex Ibarra",
       startAt,
       timeZone: "America/Mexico_City",
       publicCode: null,
     });
+    expect(built.parameters).toHaveLength(7);
+    expect(built.parameters[3]).toBe("Alex Ibarra");
     expect(built.parameters.every((part) => part.length > 0)).toBe(true);
     expect(templateParam("   ")).toBe("-");
+  });
+
+  it("los avisos del staff van al barbero y al dueño sin repetir", () => {
+    const generales = telefonosStaffGeneral("722 840 6665, 5511122233");
+    expect(generales).toEqual(["527228406665", "525511122233"]);
+    expect(destinosAvisoStaff("525511122233", generales)).toEqual(["525511122233", "527228406665"]);
+    expect(destinosAvisoStaff(null, generales)).toEqual(generales);
   });
 });
 

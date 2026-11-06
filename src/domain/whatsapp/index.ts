@@ -7,7 +7,9 @@ export {
 } from "./payload.js";
 export {
   destinatarioMeta,
+  destinosAvisoStaff,
   digitosNacionales,
+  telefonosStaffGeneral,
   resolverTelefonoBarbero,
   telefonoBarberoDesdeEntorno,
   telefonoE164,
@@ -27,6 +29,7 @@ export {
   plantillaRecordatorio,
   templateBody,
   templateParam,
+  textoCargo,
   type DatosCitaAviso,
   type PayloadPlantilla,
   type TipoAvisoCliente,

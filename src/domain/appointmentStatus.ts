@@ -10,7 +10,7 @@ export type AppointmentStatus =
 
 /**
  * Operational FSM for barbershop floor:
- * Programada → (opc Confirmada) → Check-in → Cobrar(=COMPLETED)
+ * Agendada → (opc Confirmada) → Check-in → Cobrar(=COMPLETED)
  * Cancel / No-show are terminals from pre-completed states.
  * COMPLETED is only reached via markPaid (not via status PATCH).
  */
@@ -79,7 +79,7 @@ export function staffActionsFor(status: AppointmentStatus) {
 }
 
 export const STATUS_LABELS_ES: Record<AppointmentStatus, string> = {
-  SCHEDULED: "Programada",
+  SCHEDULED: "Agendada",
   CONFIRMED: "Confirmada",
   CHECKED_IN: "Check-in",
   COMPLETED: "Completada",
